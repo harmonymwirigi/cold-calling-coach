@@ -5,8 +5,10 @@ module.exports = {
   ],
   rules: {
     'react-hooks/exhaustive-deps': 'warn',
-    'no-console': process.env.NODE_ENV === 'production' ? 'off' : 'warn',
-    'no-unused-vars': 'warn'
+    'no-console': 'off',
+    'no-unused-vars': 'warn',
+    'jsx-a11y/anchor-is-valid': 'warn',
+    'import/no-anonymous-default-export': 'warn'
   },
   env: {
     browser: true,

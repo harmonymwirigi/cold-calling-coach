@@ -218,9 +218,9 @@ const Landing = () => {
             </p>
             
             <div className="flex justify-center space-x-6 text-sm text-gray-400">
-              <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
-              <a href="#" className="hover:text-white transition-colors">Support</a>
+            <button className="hover:underline">Privacy Policy</button>
+            <button className="hover:underline">Terms of Service</button>
+            <button className="hover:underline">Contact</button>
             </div>
             
             <p className="text-xs text-gray-500 mt-6">

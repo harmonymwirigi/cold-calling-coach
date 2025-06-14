@@ -8,7 +8,6 @@ import logger from '../utils/logger';
 const RoleplayContext = createContext();
 
 export const RoleplayProvider = ({ children }) => {
-  const { userProfile } = useAuth();
   const [currentSession, setCurrentSession] = useState(null);
   const [callState, setCallState] = useState('idle'); // idle, dialing, connected, ended
   const [sessionResults, setSessionResults] = useState(null);

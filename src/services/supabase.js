@@ -570,11 +570,12 @@ export const subscriptionService = {
     return supabase.removeChannel(subscription);
   }
 };
-
-export default {
+const supabaseServices = {
   supabase,
   authService,
   userService,
   achievementService,
   subscriptionService
 };
+
+export default supabaseServices;
