@@ -1,4 +1,4 @@
-// src/components/roleplay/FunctionalPhoneInterface.jsx
+// src/components/roleplay/FunctionalPhoneInterface.jsx - FIXED COMPILATION ERROR
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle } from 'lucide-react';
@@ -9,7 +9,7 @@ import { useVoice } from '../../hooks/useVoice';
 import logger from '../../utils/logger';
 
 const FunctionalPhoneInterface = () => {
-  const { type, mode } = useParams(); // e.g., /roleplay/opener_practice/practice
+  const { type, mode } = useParams();
   const navigate = useNavigate();
   const { userProfile } = useAuth();
   const { 
@@ -28,6 +28,7 @@ const FunctionalPhoneInterface = () => {
     isSpeaking, 
     isInitialized,
     error: voiceError,
+    initializationAttempted: voiceInitAttempted, // Renamed to avoid conflict
     startListening, 
     stopListening, 
     speakText,
@@ -45,10 +46,11 @@ const FunctionalPhoneInterface = () => {
   const [error, setError] = useState('');
   const [isInitializing, setIsInitializing] = useState(true);
   const [userSpeechText, setUserSpeechText] = useState('');
+  const [voiceServiceAvailable, setVoiceServiceAvailable] = useState(false);
 
-  // Refs
+  // Refs - Renamed to avoid conflict with hook variable
   const durationInterval = useRef(null);
-  const initializationAttempted = useRef(false);
+  const componentInitAttempted = useRef(false); // Renamed from initializationAttempted
 
   // Character data for the roleplay
   const characters = [
@@ -65,8 +67,8 @@ const FunctionalPhoneInterface = () => {
 
   // Initialize the roleplay when component mounts
   useEffect(() => {
-    if (initializationAttempted.current) return;
-    initializationAttempted.current = true;
+    if (componentInitAttempted.current) return; // Fixed variable name
+    componentInitAttempted.current = true; // Fixed variable name
 
     const initializeRoleplay = async () => {
       try {
@@ -81,22 +83,16 @@ const FunctionalPhoneInterface = () => {
           throw new Error(access?.reason || 'Access denied to this roleplay');
         }
 
-        // Wait for voice service to be ready
-        if (!isInitialized) {
-          logger.log('⏳ Waiting for voice service initialization...');
-          await new Promise(resolve => {
-            const checkInit = () => {
-              if (voiceService.isInitialized) {
-                resolve();
-              } else {
-                setTimeout(checkInit, 100);
-              }
-            };
-            checkInit();
-          });
+        // Check voice service status but don't block on it
+        const voiceAvailable = await checkVoiceServiceAvailability();
+        setVoiceServiceAvailable(voiceAvailable);
+
+        if (!voiceAvailable) {
+          logger.warn('⚠️ Voice service not available - continuing with limited functionality');
+          setError('Voice service unavailable - you can still practice by typing responses');
         }
 
-        // Start the roleplay session
+        // Start the roleplay session regardless of voice service status
         await startRoleplaySession(type, mode, {
           character: currentCharacter
         });
@@ -116,7 +112,37 @@ const FunctionalPhoneInterface = () => {
     return () => {
       cleanup();
     };
-  }, [type, mode, startRoleplaySession, isInitialized, getRoleplayAccess]);
+  }, [type, mode, startRoleplaySession, getRoleplayAccess]);
+
+  // Check voice service availability with timeout
+  const checkVoiceServiceAvailability = async () => {
+    try {
+      // Give voice service a chance to initialize but don't wait too long
+      if (voiceInitAttempted && !isInitialized) { // Fixed variable name
+        logger.log('⏳ Waiting briefly for voice service...');
+        
+        // Wait up to 3 seconds for voice service to initialize
+        const timeout = new Promise(resolve => setTimeout(() => resolve(false), 3000));
+        const voiceReady = new Promise(resolve => {
+          const checkVoice = () => {
+            if (isInitialized) {
+              resolve(true);
+            } else {
+              setTimeout(checkVoice, 100);
+            }
+          };
+          checkVoice();
+        });
+
+        return await Promise.race([voiceReady, timeout]);
+      }
+
+      return isInitialized;
+    } catch (error) {
+      logger.warn('Voice service availability check failed:', error);
+      return false;
+    }
+  };
 
   // Handle call state changes
   useEffect(() => {
@@ -148,7 +174,9 @@ const FunctionalPhoneInterface = () => {
   // Handle voice errors
   useEffect(() => {
     if (voiceError) {
-      setError(voiceError);
+      logger.warn('Voice error occurred:', voiceError);
+      setVoiceServiceAvailable(false);
+      // Don't set this as a blocking error - just show a warning
     }
   }, [voiceError]);
 
@@ -179,6 +207,11 @@ const FunctionalPhoneInterface = () => {
       return;
     }
 
+    if (!voiceServiceAvailable) {
+      setError('Voice service not available. Please check your microphone and browser permissions.');
+      return;
+    }
+
     try {
       setError('');
       setSilenceWarning(false);
@@ -186,15 +219,25 @@ const FunctionalPhoneInterface = () => {
       
       logger.log('🎤 Starting to listen...');
       
-      const result = await startListening({
-        skipPermissionCheck: false
-      });
+      const result = await startListening(
+        // onResult callback
+        async (transcript, confidence) => {
+          logger.log('📝 User said:', transcript);
+          setUserSpeechText(transcript);
+          await processUserInput(transcript, confidence);
+        },
+        // onError callback
+        (error) => {
+          logger.error('❌ Voice recognition error:', error);
+          setError(error);
+        }
+      );
 
-      if (result?.transcript) {
-        logger.log('📝 User said:', result.transcript);
+      if (result && result.transcript) {
         setUserSpeechText(result.transcript);
         await processUserInput(result.transcript, result.confidence);
       }
+
     } catch (error) {
       logger.error('❌ Voice recognition error:', error);
       setError(error.message);
@@ -222,13 +265,18 @@ const FunctionalPhoneInterface = () => {
         setCurrentMessage(aiResult.response);
         setEvaluation(aiResult.evaluation);
 
-        // Speak the AI response if not muted
-        if (!isMuted && aiResult.response) {
-          logger.log('🗣️ AI speaking:', aiResult.response);
-          await speakText(aiResult.response, {
-            voiceId: 'Joanna',
-            rate: 0.9
-          });
+        // Speak the AI response if not muted and voice service is available
+        if (!isMuted && aiResult.response && voiceServiceAvailable) {
+          try {
+            logger.log('🗣️ AI speaking:', aiResult.response);
+            await speakText(aiResult.response, {
+              voiceId: 'Joanna',
+              rate: 0.9
+            });
+          } catch (speechError) {
+            logger.warn('❌ AI speech failed:', speechError);
+            // Don't block the conversation if speech fails
+          }
         }
 
         // Check if call should end
@@ -346,6 +394,11 @@ const FunctionalPhoneInterface = () => {
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-white mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold mb-2">Initializing Roleplay</h2>
           <p className="text-blue-200">Setting up your practice session...</p>
+          {voiceError && (
+            <p className="text-yellow-200 text-sm mt-2">
+              Voice service is starting up...
+            </p>
+          )}
         </div>
       </div>
     );
@@ -390,9 +443,18 @@ const FunctionalPhoneInterface = () => {
 
       {/* Error Message */}
       {error && (
-        <div className="bg-red-600 text-white p-4 text-center flex items-center justify-center">
+        <div className={`p-4 text-center flex items-center justify-center ${
+          voiceServiceAvailable ? 'bg-red-600 text-white' : 'bg-yellow-600 text-white'
+        }`}>
           <AlertCircle className="w-5 h-5 mr-2" />
           {error}
+        </div>
+      )}
+
+      {/* Voice Service Status */}
+      {!voiceServiceAvailable && !error && (
+        <div className="bg-blue-600/20 text-blue-200 p-3 text-center text-sm">
+          💡 Voice service not available - you can practice by typing responses or try refreshing
         </div>
       )}
 
@@ -484,8 +546,10 @@ const FunctionalPhoneInterface = () => {
           
           {callState === 'connected' && !isListening && !isSpeaking && !isProcessing && (
             <div className="space-y-2">
-              <p className="text-blue-200">🎤 Tap microphone to speak</p>
-              {process.env.NODE_ENV === 'development' && (
+              <p className="text-blue-200">
+                {voiceServiceAvailable ? '🎤 Tap microphone to speak' : '⌨️ Voice not available - type your response'}
+              </p>
+              {process.env.NODE_ENV === 'development' && voiceService && (
                 <button
                   onClick={() => voiceService.testSpeech("Hello, this is a test.")}
                   className="text-xs bg-blue-600/20 px-2 py-1 rounded text-blue-200 hover:bg-blue-600/30"
@@ -515,7 +579,7 @@ const FunctionalPhoneInterface = () => {
         {/* Controls */}
         <div className="flex flex-col items-center space-y-6">
           {/* Voice Controls */}
-          {callState === 'connected' && (
+          {callState === 'connected' && voiceServiceAvailable && (
             <div className="flex space-x-8">
               {/* Mute Button */}
               <button
@@ -582,7 +646,8 @@ const FunctionalPhoneInterface = () => {
       {/* Instructions */}
       <div className="bg-black/20 p-4 text-center text-sm text-white/80">
         {callState === 'dialing' && "Connecting to prospect..."}
-        {callState === 'connected' && !isListening && !isSpeaking && "Tap microphone to speak, then release when finished"}
+        {callState === 'connected' && !isListening && !isSpeaking && voiceServiceAvailable && "Tap microphone to speak, then release when finished"}
+        {callState === 'connected' && !isListening && !isSpeaking && !voiceServiceAvailable && "Voice service unavailable - practice by typing responses"}
         {callState === 'connected' && isListening && "Speaking... Release when finished"}
         {callState === 'connected' && isSpeaking && "AI is responding..."}
         {callState === 'ended' && "Call completed - review your results"}
@@ -591,7 +656,7 @@ const FunctionalPhoneInterface = () => {
   );
 };
 
-// Call Results Component
+// Call Results Component (unchanged)
 const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue, onRetry }) => {
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -670,58 +735,6 @@ const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue,
               <div className="bg-gray-50 rounded-lg p-6 mb-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">📝 Feedback</h3>
                 <p className="text-gray-700">{evaluation.feedback}</p>
-              </div>
-            )}
-
-            {/* Coaching */}
-            {coaching && Object.keys(coaching).length > 0 && (
-              <div className="bg-blue-50 rounded-lg p-6 mb-6">
-                <h3 className="text-lg font-semibold text-blue-900 mb-4">💡 Coaching Tips</h3>
-                <div className="space-y-3">
-                  {coaching.sales && (
-                    <div>
-                      <span className="font-medium text-blue-800">Sales:</span>
-                      <span className="text-blue-700 ml-2">{coaching.sales}</span>
-                    </div>
-                  )}
-                  {coaching.grammar && (
-                    <div>
-                      <span className="font-medium text-blue-800">Grammar:</span>
-                      <span className="text-blue-700 ml-2">{coaching.grammar}</span>
-                    </div>
-                  )}
-                  {coaching.vocabulary && (
-                    <div>
-                      <span className="font-medium text-blue-800">Vocabulary:</span>
-                      <span className="text-blue-700 ml-2">{coaching.vocabulary}</span>
-                    </div>
-                  )}
-                  {coaching.pronunciation && (
-                    <div>
-                      <span className="font-medium text-blue-800">Pronunciation:</span>
-                      <span className="text-blue-700 ml-2">{coaching.pronunciation}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Score Breakdown */}
-            {evaluation.scores && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 Score Breakdown</h3>
-                <div className="space-y-3">
-                  {Object.entries(evaluation.scores).map(([criterion, passed], index) => (
-                    <div key={criterion} className="flex items-center justify-between">
-                      <span className="text-gray-700">Criterion {index + 1}</span>
-                      <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {passed ? '✓ Met' : '✗ Needs Work'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
 

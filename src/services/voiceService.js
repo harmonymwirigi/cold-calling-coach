@@ -1,5 +1,5 @@
-// src/services/voiceService.js
-// Browser-based voice service (NO AWS dependencies)
+// src/services/voiceService.js - FIXED VERSION
+// Browser-based voice service with improved initialization
 import logger from '../utils/logger';
 
 export class VoiceService {
@@ -16,6 +16,7 @@ export class VoiceService {
     this.audioContext = null;
     this.isInitialized = false;
     this.voices = [];
+    this.initializationPromise = null; // Prevent multiple initializations
     
     // Bind methods to ensure proper context
     this.initialize = this.initialize.bind(this);
@@ -25,88 +26,136 @@ export class VoiceService {
     this.cleanup = this.cleanup.bind(this);
   }
 
-  // Initialize the voice service
+  // Initialize the voice service with better error handling
   async initialize() {
     try {
+      // Return existing promise if initialization is already in progress
+      if (this.initializationPromise) {
+        logger.log('🎤 Voice service initialization already in progress');
+        return await this.initializationPromise;
+      }
+
       // Check if already initialized
       if (this.isInitialized === true) {
         logger.log('🎤 Voice service already initialized');
         return true;
       }
 
-      logger.log('🎤 Initializing voice service...');
-
-      // Check browser compatibility first
-      const compatibility = this.checkCompatibility();
-      if (!compatibility.compatible) {
-        throw new Error(`Browser not compatible: ${compatibility.issues.join(', ')}`);
-      }
-
-      // Initialize speech synthesis first (safer)
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        this.synthesis = window.speechSynthesis;
-      } else {
-        throw new Error('Speech synthesis not supported');
-      }
-
-      // Initialize speech recognition
-      await this.initializeSpeechRecognition();
-
-      // Initialize audio context for better audio handling
-      if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
-        try {
-          this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        } catch (audioError) {
-          logger.warn('Audio context initialization failed:', audioError);
-          // Continue without audio context - not critical
-        }
-      }
-
-      // Load voices
-      await this.loadVoices();
-
-      this.isInitialized = true;
-      logger.log('✅ Voice service initialized successfully (browser-only)');
-      return true;
+      // Create initialization promise
+      this.initializationPromise = this._performInitialization();
+      
+      const result = await this.initializationPromise;
+      this.initializationPromise = null; // Clear promise after completion
+      
+      return result;
 
     } catch (error) {
+      this.initializationPromise = null; // Clear promise on error
       logger.error('❌ Voice service initialization failed:', error);
       this.isInitialized = false;
       throw error;
     }
   }
 
-  // Load available voices with better error handling
-  async loadVoices() {
-    return new Promise((resolve) => {
+  // Separate method for actual initialization logic
+  async _performInitialization() {
+    logger.log('🎤 Starting voice service initialization...');
+
+    // Check browser compatibility first
+    const compatibility = this.checkCompatibility();
+    if (!compatibility.compatible) {
+      throw new Error(`Browser not compatible: ${compatibility.issues.join(', ')}`);
+    }
+
+    // Initialize speech synthesis first (safer and more reliable)
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      this.synthesis = window.speechSynthesis;
+      logger.log('✅ Speech synthesis available');
+    } else {
+      logger.warn('⚠️ Speech synthesis not supported - continuing without it');
+    }
+
+    // Initialize speech recognition
+    try {
+      await this.initializeSpeechRecognition();
+      logger.log('✅ Speech recognition initialized');
+    } catch (recognitionError) {
+      logger.warn('⚠️ Speech recognition failed - continuing without it:', recognitionError);
+      // Don't throw here - continue without speech recognition
+    }
+
+    // Initialize audio context for better audio handling (optional)
+    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+      try {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        logger.log('✅ Audio context initialized');
+      } catch (audioError) {
+        logger.warn('⚠️ Audio context initialization failed - continuing without it:', audioError);
+        // Continue without audio context - not critical
+      }
+    }
+
+    // Load voices with timeout
+    try {
+      await this.loadVoicesWithTimeout(3000); // 3 second timeout for voice loading
+      logger.log('✅ Voices loaded successfully');
+    } catch (voiceError) {
+      logger.warn('⚠️ Voice loading failed - continuing with basic functionality:', voiceError);
+      // Continue even if voice loading fails
+    }
+
+    this.isInitialized = true;
+    logger.log('✅ Voice service initialized successfully (browser-only)');
+    return true;
+  }
+
+  // Load available voices with timeout and better error handling
+  async loadVoicesWithTimeout(timeoutMs = 3000) {
+    return new Promise((resolve, reject) => {
       if (!this.synthesis) {
         logger.warn('No synthesis available for voice loading');
-        resolve();
+        resolve(); // Don't reject - just continue
         return;
       }
 
       let attempts = 0;
-      const maxAttempts = 10;
+      const maxAttempts = 5; // Reduced from 10
+      let timeoutId;
+
+      // Set up timeout
+      timeoutId = setTimeout(() => {
+        logger.warn('Voice loading timed out - continuing without voices');
+        resolve(); // Don't reject on timeout - just continue
+      }, timeoutMs);
 
       const loadVoicesHelper = () => {
         attempts++;
         this.voices = this.synthesis.getVoices() || [];
         
         if (this.voices.length > 0) {
-          logger.log(`Loaded ${this.voices.length} voices`);
+          logger.log(`✅ Loaded ${this.voices.length} voices`);
+          clearTimeout(timeoutId);
           resolve();
         } else if (attempts < maxAttempts) {
           // Voices not loaded yet, wait a bit
-          setTimeout(loadVoicesHelper, 100);
+          setTimeout(loadVoicesHelper, 200); // Increased interval
         } else {
-          logger.warn('Could not load voices after max attempts');
-          resolve(); // Continue without voices
+          logger.warn('Could not load voices after max attempts - continuing anyway');
+          clearTimeout(timeoutId);
+          resolve(); // Don't reject - continue without voices
         }
       };
 
-      // Set up voice change listener
-      if (this.synthesis.onvoiceschanged !== undefined) {
-        this.synthesis.onvoiceschanged = loadVoicesHelper;
+      // Set up voice change listener (may not work on all browsers)
+      try {
+        if (this.synthesis.onvoiceschanged !== undefined) {
+          this.synthesis.onvoiceschanged = () => {
+            clearTimeout(timeoutId);
+            loadVoicesHelper();
+          };
+        }
+      } catch (listenerError) {
+        logger.warn('Could not set up voice change listener:', listenerError);
       }
       
       // Try to load immediately
@@ -134,6 +183,11 @@ export class VoiceService {
       this.recognition.lang = 'en-US';
       this.recognition.maxAlternatives = 1;
 
+      // Test that the recognition object works
+      if (typeof this.recognition.start !== 'function') {
+        throw new Error('Speech recognition start method not available');
+      }
+
       logger.log('✅ Speech recognition initialized');
       return this.recognition;
     } catch (error) {
@@ -156,6 +210,10 @@ export class VoiceService {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
+      if (!this.recognition) {
+        throw new Error('Speech recognition not available - please check browser compatibility');
+      }
+
       // Request microphone permission if needed
       if (!options.skipPermissionCheck) {
         await this.requestMicrophonePermission();
@@ -165,19 +223,21 @@ export class VoiceService {
       if (this.audioContext && this.audioContext.state === 'suspended') {
         try {
           await this.audioContext.resume();
+          logger.log('✅ Audio context resumed');
         } catch (resumeError) {
           logger.warn('Could not resume audio context:', resumeError);
         }
       }
 
       return new Promise((resolve, reject) => {
-        if (!this.recognition) {
-          reject(new Error('Speech recognition not available'));
-          return;
-        }
-
         this.isListening = true;
         this.startSilenceTimer();
+
+        // Set up timeout for listening
+        const listeningTimeout = setTimeout(() => {
+          this.stopListening();
+          reject(new Error('Speech recognition timed out'));
+        }, 30000); // 30 second timeout
 
         // Configure recognition callbacks
         this.recognition.onstart = () => {
@@ -186,6 +246,7 @@ export class VoiceService {
         };
 
         this.recognition.onresult = (event) => {
+          clearTimeout(listeningTimeout);
           this.clearSilenceTimer();
           
           const result = event.results[0];
@@ -193,11 +254,6 @@ export class VoiceService {
           const confidence = result[0].confidence;
 
           logger.log('📝 Speech recognized:', { transcript, confidence });
-
-          // Log pronunciation issues for coaching
-          if (confidence < 0.7) {
-            logger.log('⚠️ Low confidence speech detected:', confidence);
-          }
 
           resolve({
             transcript: transcript.trim(),
@@ -208,6 +264,7 @@ export class VoiceService {
         };
 
         this.recognition.onerror = (event) => {
+          clearTimeout(listeningTimeout);
           logger.error('❌ Speech recognition error:', event.error);
           this.isListening = false;
           this.clearSilenceTimer();
@@ -227,6 +284,7 @@ export class VoiceService {
         };
 
         this.recognition.onend = () => {
+          clearTimeout(listeningTimeout);
           logger.log('🔚 Speech recognition ended');
           this.isListening = false;
           this.clearSilenceTimer();
@@ -236,6 +294,7 @@ export class VoiceService {
         try {
           this.recognition.start();
         } catch (error) {
+          clearTimeout(listeningTimeout);
           this.isListening = false;
           this.clearSilenceTimer();
           reject(error);
@@ -304,7 +363,7 @@ export class VoiceService {
     }
   }
 
-  // Browser synthesis (ONLY method - no AWS)
+  // Browser synthesis with timeout
   async synthesizeWithBrowser(text, options = {}) {
     if (!this.synthesis) {
       throw new Error('Browser speech synthesis not supported');
@@ -322,7 +381,7 @@ export class VoiceService {
       utterance.volume = options.volume || 0.8;
       utterance.lang = 'en-US';
 
-      // Find appropriate voice (prefer female US English)
+      // Find appropriate voice
       const preferredVoice = this.voices.find(voice => 
         voice.lang.includes('en-US') && voice.name.toLowerCase().includes('female')
       ) || this.voices.find(voice => voice.lang.includes('en-US')) || this.voices[0];
@@ -333,18 +392,25 @@ export class VoiceService {
 
       this.currentUtterance = utterance;
 
+      // Set up timeout for synthesis
+      const synthesisTimeout = setTimeout(() => {
+        this.stopCurrentAudio();
+        reject(new Error('Speech synthesis timed out'));
+      }, 30000); // 30 second timeout
+
       utterance.onstart = () => {
         logger.log('🗣️ Browser synthesis started');
         this.isSpeaking = true;
       };
 
       utterance.onend = () => {
+        clearTimeout(synthesisTimeout);
         logger.log('✅ Browser synthesis completed');
         this.isSpeaking = false;
         this.currentUtterance = null;
         resolve({
           success: true,
-          audioUrl: null, // Browser synthesis doesn't provide URL
+          audioUrl: null,
           text,
           synthesisType: 'browser',
           duration: this.estimateSpeechDuration(text)
@@ -352,6 +418,7 @@ export class VoiceService {
       };
 
       utterance.onerror = (event) => {
+        clearTimeout(synthesisTimeout);
         logger.error('❌ Browser synthesis error:', event.error);
         this.isSpeaking = false;
         this.currentUtterance = null;
@@ -363,6 +430,7 @@ export class VoiceService {
       try {
         this.synthesis.speak(utterance);
       } catch (error) {
+        clearTimeout(synthesisTimeout);
         this.isSpeaking = false;
         this.currentUtterance = null;
         reject(error);
@@ -429,7 +497,6 @@ export class VoiceService {
       const silenceSeconds = Math.floor(silenceDuration / 1000);
       
       if (silenceSeconds === 10) {
-        // First warning at 10 seconds
         logger.log('⚠️ 10 second silence warning');
         if (this.onSilenceCallback) {
           try {
@@ -439,7 +506,6 @@ export class VoiceService {
           }
         }
       } else if (silenceSeconds >= 15) {
-        // Hang up at 15 seconds total
         logger.log('⏰ 15 second silence timeout - hanging up');
         this.clearSilenceTimer();
         if (this.onHangupCallback) {
@@ -468,11 +534,10 @@ export class VoiceService {
     this.onHangupCallback = onHangup;
   }
 
-  // Estimate speech duration (rough calculation)
+  // Estimate speech duration
   estimateSpeechDuration(text) {
     if (!text || typeof text !== 'string') return 0;
     
-    // Average speaking rate: ~150 words per minute for natural speech
     const words = text.split(/\s+/).filter(word => word.length > 0).length;
     const wordsPerSecond = 150 / 60; // ~2.5 words per second
     return Math.ceil(words / wordsPerSecond);
@@ -539,6 +604,7 @@ export class VoiceService {
     }
 
     this.isInitialized = false;
+    this.initializationPromise = null;
   }
 
   // Get current state
@@ -565,24 +631,5 @@ export class VoiceService {
   }
 }
 
-// Create and export singleton instance with better error handling
-let voiceServiceInstance = null;
-
-try {
-  voiceServiceInstance = new VoiceService();
-} catch (error) {
-  console.error('Failed to create voice service instance:', error);
-  // Create a fallback object to prevent undefined errors
-  voiceServiceInstance = {
-    initialize: () => Promise.reject(new Error('Voice service not available')),
-    isInitialized: false,
-    startListening: () => Promise.reject(new Error('Voice service not available')),
-    stopListening: () => {},
-    speakText: () => Promise.reject(new Error('Voice service not available')),
-    cleanup: () => {},
-    getState: () => ({ isInitialized: false, isListening: false, isSpeaking: false })
-  };
-}
-
-export const voiceService = voiceServiceInstance;
-export default voiceServiceInstance;
+// Create and export a singleton instance
+export const voiceService = new VoiceService();
