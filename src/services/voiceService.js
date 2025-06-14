@@ -12,31 +12,54 @@ export class VoiceService {
     this.onSilenceCallback = null;
     this.onHangupCallback = null;
     this.currentUtterance = null;
-    this.synthesis = window.speechSynthesis;
+    this.synthesis = null;
     this.audioContext = null;
     this.isInitialized = false;
     this.voices = [];
+    
+    // Bind methods to ensure proper context
+    this.initialize = this.initialize.bind(this);
+    this.startListening = this.startListening.bind(this);
+    this.stopListening = this.stopListening.bind(this);
+    this.speakText = this.speakText.bind(this);
+    this.cleanup = this.cleanup.bind(this);
   }
 
   // Initialize the voice service
   async initialize() {
     try {
-      if (this.isInitialized) return true;
+      // Check if already initialized
+      if (this.isInitialized === true) {
+        logger.log('🎤 Voice service already initialized');
+        return true;
+      }
 
       logger.log('🎤 Initializing voice service...');
 
-      // Check browser compatibility
+      // Check browser compatibility first
       const compatibility = this.checkCompatibility();
       if (!compatibility.compatible) {
         throw new Error(`Browser not compatible: ${compatibility.issues.join(', ')}`);
+      }
+
+      // Initialize speech synthesis first (safer)
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        this.synthesis = window.speechSynthesis;
+      } else {
+        throw new Error('Speech synthesis not supported');
       }
 
       // Initialize speech recognition
       await this.initializeSpeechRecognition();
 
       // Initialize audio context for better audio handling
-      if (window.AudioContext || window.webkitAudioContext) {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+        try {
+          this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (audioError) {
+          logger.warn('Audio context initialization failed:', audioError);
+          // Continue without audio context - not critical
+        }
       }
 
       // Load voices
@@ -48,55 +71,81 @@ export class VoiceService {
 
     } catch (error) {
       logger.error('❌ Voice service initialization failed:', error);
+      this.isInitialized = false;
       throw error;
     }
   }
 
-  // Load available voices
+  // Load available voices with better error handling
   async loadVoices() {
     return new Promise((resolve) => {
+      if (!this.synthesis) {
+        logger.warn('No synthesis available for voice loading');
+        resolve();
+        return;
+      }
+
+      let attempts = 0;
+      const maxAttempts = 10;
+
       const loadVoicesHelper = () => {
-        this.voices = this.synthesis.getVoices();
+        attempts++;
+        this.voices = this.synthesis.getVoices() || [];
         
         if (this.voices.length > 0) {
           logger.log(`Loaded ${this.voices.length} voices`);
           resolve();
-        } else {
+        } else if (attempts < maxAttempts) {
           // Voices not loaded yet, wait a bit
           setTimeout(loadVoicesHelper, 100);
+        } else {
+          logger.warn('Could not load voices after max attempts');
+          resolve(); // Continue without voices
         }
       };
 
       // Set up voice change listener
-      this.synthesis.onvoiceschanged = loadVoicesHelper;
+      if (this.synthesis.onvoiceschanged !== undefined) {
+        this.synthesis.onvoiceschanged = loadVoicesHelper;
+      }
       
       // Try to load immediately
       loadVoicesHelper();
     });
   }
 
-  // Initialize speech recognition
+  // Initialize speech recognition with better error handling
   async initializeSpeechRecognition() {
+    if (typeof window === 'undefined') {
+      throw new Error('Window object not available');
+    }
+
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       throw new Error('Speech recognition not supported in this browser');
     }
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    this.recognition = new SpeechRecognition();
-    
-    // Configure recognition for cold calling
-    this.recognition.continuous = false;
-    this.recognition.interimResults = false;
-    this.recognition.lang = 'en-US';
-    this.recognition.maxAlternatives = 1;
+    try {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      this.recognition = new SpeechRecognition();
+      
+      // Configure recognition for cold calling
+      this.recognition.continuous = false;
+      this.recognition.interimResults = false;
+      this.recognition.lang = 'en-US';
+      this.recognition.maxAlternatives = 1;
 
-    logger.log('✅ Speech recognition initialized');
-    return this.recognition;
+      logger.log('✅ Speech recognition initialized');
+      return this.recognition;
+    } catch (error) {
+      logger.error('Speech recognition initialization failed:', error);
+      throw error;
+    }
   }
 
   // Start listening for speech with enhanced error handling
   async startListening(options = {}) {
     try {
+      // Ensure initialization
       if (!this.isInitialized) {
         await this.initialize();
       }
@@ -114,10 +163,19 @@ export class VoiceService {
 
       // Resume audio context if suspended (iOS requirement)
       if (this.audioContext && this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
+        try {
+          await this.audioContext.resume();
+        } catch (resumeError) {
+          logger.warn('Could not resume audio context:', resumeError);
+        }
       }
 
       return new Promise((resolve, reject) => {
+        if (!this.recognition) {
+          reject(new Error('Speech recognition not available'));
+          return;
+        }
+
         this.isListening = true;
         this.startSilenceTimer();
 
@@ -208,6 +266,10 @@ export class VoiceService {
   // Request microphone permission
   async requestMicrophonePermission() {
     try {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+        throw new Error('Media devices not supported');
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -230,6 +292,10 @@ export class VoiceService {
   // Synthesize speech using browser synthesis (no AWS)
   async synthesizeSpeech(text, options = {}) {
     try {
+      if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        throw new Error('Invalid text provided for synthesis');
+      }
+
       logger.log('🗣️ Synthesizing speech:', text.substring(0, 50) + '...');
       return await this.synthesizeWithBrowser(text, options);
     } catch (error) {
@@ -294,21 +360,25 @@ export class VoiceService {
 
       // Start speaking
       logger.log('🗣️ Starting browser synthesis for:', text);
-      this.synthesis.speak(utterance);
+      try {
+        this.synthesis.speak(utterance);
+      } catch (error) {
+        this.isSpeaking = false;
+        this.currentUtterance = null;
+        reject(error);
+      }
     });
-  }
-
-  // Play synthesized audio (for browser synthesis, it's already playing)
-  async playAudio(audioUrl, options = {}) {
-    // Browser synthesis case - already playing
-    return { success: true, playbackType: 'browser' };
   }
 
   // Stop currently playing audio
   stopCurrentAudio() {
     // Stop browser synthesis
     if (this.synthesis && this.synthesis.speaking) {
-      this.synthesis.cancel();
+      try {
+        this.synthesis.cancel();
+      } catch (error) {
+        logger.warn('Error cancelling synthesis:', error);
+      }
     }
 
     if (this.currentUtterance) {
@@ -321,9 +391,14 @@ export class VoiceService {
   // Speak text (synthesis + playback combined)
   async speakText(text, options = {}) {
     try {
-      if (!text || text.trim().length === 0) {
+      if (!text || typeof text !== 'string' || text.trim().length === 0) {
         logger.warn('⚠️ Empty text provided to speakText');
         return { success: false, error: 'Empty text' };
+      }
+
+      // Ensure initialization
+      if (!this.isInitialized) {
+        await this.initialize();
       }
 
       logger.log('🗣️ Speaking text:', text);
@@ -342,12 +417,14 @@ export class VoiceService {
     }
   }
 
-  // Start silence detection timer (follows roleplay instructions: 10s warning, 15s hangup)
+  // Start silence detection timer
   startSilenceTimer() {
     this.clearSilenceTimer();
     this.silenceStartTime = Date.now();
     
     this.silenceTimer = setInterval(() => {
+      if (!this.silenceStartTime) return;
+      
       const silenceDuration = Date.now() - this.silenceStartTime;
       const silenceSeconds = Math.floor(silenceDuration / 1000);
       
@@ -355,14 +432,22 @@ export class VoiceService {
         // First warning at 10 seconds
         logger.log('⚠️ 10 second silence warning');
         if (this.onSilenceCallback) {
-          this.onSilenceCallback(silenceSeconds);
+          try {
+            this.onSilenceCallback(silenceSeconds);
+          } catch (error) {
+            logger.error('Error in silence callback:', error);
+          }
         }
       } else if (silenceSeconds >= 15) {
         // Hang up at 15 seconds total
         logger.log('⏰ 15 second silence timeout - hanging up');
         this.clearSilenceTimer();
         if (this.onHangupCallback) {
-          this.onHangupCallback('silence_timeout');
+          try {
+            this.onHangupCallback('silence_timeout');
+          } catch (error) {
+            logger.error('Error in hangup callback:', error);
+          }
         }
       }
     }, 1000);
@@ -385,18 +470,28 @@ export class VoiceService {
 
   // Estimate speech duration (rough calculation)
   estimateSpeechDuration(text) {
+    if (!text || typeof text !== 'string') return 0;
+    
     // Average speaking rate: ~150 words per minute for natural speech
-    const words = text.split(/\s+/).length;
+    const words = text.split(/\s+/).filter(word => word.length > 0).length;
     const wordsPerSecond = 150 / 60; // ~2.5 words per second
     return Math.ceil(words / wordsPerSecond);
   }
 
   // Check browser compatibility
   checkCompatibility() {
+    if (typeof window === 'undefined') {
+      return {
+        compatible: false,
+        issues: ['Window object not available'],
+        features: {}
+      };
+    }
+
     const compatibility = {
       speechRecognition: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
       speechSynthesis: 'speechSynthesis' in window,
-      mediaDevices: 'mediaDevices' in navigator,
+      mediaDevices: typeof navigator !== 'undefined' && 'mediaDevices' in navigator,
       audioContext: 'AudioContext' in window || 'webkitAudioContext' in window,
       promises: 'Promise' in window
     };
@@ -415,7 +510,7 @@ export class VoiceService {
 
   // Get available voices
   getAvailableVoices() {
-    return this.voices.map(voice => ({
+    return (this.voices || []).map(voice => ({
       name: voice.name,
       lang: voice.lang,
       gender: voice.name.toLowerCase().includes('female') ? 'female' : 'male',
@@ -436,7 +531,11 @@ export class VoiceService {
     }
 
     if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close();
+      try {
+        this.audioContext.close();
+      } catch (error) {
+        logger.warn('Error closing audio context:', error);
+      }
     }
 
     this.isInitialized = false;
@@ -445,9 +544,9 @@ export class VoiceService {
   // Get current state
   getState() {
     return {
-      isListening: this.isListening,
-      isSpeaking: this.isSpeaking,
-      isInitialized: this.isInitialized,
+      isListening: this.isListening || false,
+      isSpeaking: this.isSpeaking || false,
+      isInitialized: this.isInitialized || false,
       hasAudioContext: !!this.audioContext
     };
   }
@@ -466,6 +565,24 @@ export class VoiceService {
   }
 }
 
-// Export singleton instance
-export const voiceService = new VoiceService();
-export default voiceService; 
+// Create and export singleton instance with better error handling
+let voiceServiceInstance = null;
+
+try {
+  voiceServiceInstance = new VoiceService();
+} catch (error) {
+  console.error('Failed to create voice service instance:', error);
+  // Create a fallback object to prevent undefined errors
+  voiceServiceInstance = {
+    initialize: () => Promise.reject(new Error('Voice service not available')),
+    isInitialized: false,
+    startListening: () => Promise.reject(new Error('Voice service not available')),
+    stopListening: () => {},
+    speakText: () => Promise.reject(new Error('Voice service not available')),
+    cleanup: () => {},
+    getState: () => ({ isInitialized: false, isListening: false, isSpeaking: false })
+  };
+}
+
+export const voiceService = voiceServiceInstance;
+export default voiceServiceInstance;

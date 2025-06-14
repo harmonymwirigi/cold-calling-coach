@@ -13,7 +13,33 @@ export const RoleplayProvider = ({ children }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [lastSpeechTime, setLastSpeechTime] = useState(0);
+  const [voiceError, setVoiceError] = useState(null);
   const silenceTimerRef = useRef(null);
+  const initializationRef = useRef(false);
+
+  // Safely initialize voice service
+  const initializeVoiceService = useCallback(async () => {
+    if (initializationRef.current) return true;
+    
+    try {
+      logger.log('🎤 Initializing voice service from context...');
+      
+      // Check if voiceService exists and has initialize method
+      if (!voiceService || typeof voiceService.initialize !== 'function') {
+        throw new Error('Voice service not available');
+      }
+
+      await voiceService.initialize();
+      initializationRef.current = true;
+      setVoiceError(null);
+      logger.log('✅ Voice service initialized successfully');
+      return true;
+    } catch (error) {
+      logger.error('❌ Voice service initialization failed:', error);
+      setVoiceError(error.message);
+      return false;
+    }
+  }, []);
 
   // Define endSession first since it's used by other functions
   const endSession = useCallback(async (reason = 'completed') => {
@@ -46,13 +72,18 @@ export const RoleplayProvider = ({ children }) => {
 
       // Generate coaching feedback
       if (evaluations.length > 0) {
-        sessionResult.coaching = await openAIService.generateCoachingFeedback({
-          roleplayType: currentSession.roleplayType,
-          callsAttempted: 1,
-          callsPassed: sessionResult.passed ? 1 : 0,
-          averageScore: averageScore,
-          commonIssues: evaluations.flatMap(e => e.issues || [])
-        });
+        try {
+          sessionResult.coaching = await openAIService.generateCoachingFeedback({
+            roleplayType: currentSession.roleplayType,
+            callsAttempted: 1,
+            callsPassed: sessionResult.passed ? 1 : 0,
+            averageScore: averageScore,
+            commonIssues: evaluations.flatMap(e => e.issues || [])
+          });
+        } catch (coachingError) {
+          logger.error('Failed to generate coaching feedback:', coachingError);
+          // Continue without coaching feedback
+        }
       }
 
       setSessionResults(sessionResult);
@@ -65,12 +96,13 @@ export const RoleplayProvider = ({ children }) => {
     }
   }, [currentSession]);
 
-  // Then define handleSilenceWarning and handleSilenceTimeout
+  // Handle silence warning with voice service safety checks
   const handleSilenceWarning = useCallback((silenceSeconds) => {
     logger.log('Silence warning:', silenceSeconds);
-    // Add any warning UI or sound here
+    // Add any warning UI or sound here if needed
   }, []);
 
+  // Handle silence timeout with voice service safety checks
   const handleSilenceTimeout = useCallback(async (reason) => {
     try {
       setIsProcessing(true);
@@ -81,16 +113,28 @@ export const RoleplayProvider = ({ children }) => {
     } finally {
       setIsProcessing(false);
     }
-  }, [endSession, setIsProcessing]);
+  }, [endSession]);
 
-  // Then use them in useEffect
+  // Set up voice service callbacks with safety checks
   useEffect(() => {
-    voiceService.setSilenceCallbacks(
-      handleSilenceWarning,
-      handleSilenceTimeout
-    );
+    const setupVoiceCallbacks = async () => {
+      try {
+        // Check if voice service is available and initialized
+        if (voiceService && typeof voiceService.setSilenceCallbacks === 'function') {
+          voiceService.setSilenceCallbacks(
+            handleSilenceWarning,
+            handleSilenceTimeout
+          );
+        }
+      } catch (error) {
+        logger.error('Error setting up voice callbacks:', error);
+      }
+    };
+
+    setupVoiceCallbacks();
   }, [handleSilenceWarning, handleSilenceTimeout]);
 
+  // Local silence timer as backup
   useEffect(() => {
     if (isListening) {
       silenceTimerRef.current = setInterval(() => {
@@ -114,8 +158,14 @@ export const RoleplayProvider = ({ children }) => {
       logger.log('🚀 Starting roleplay session:', { roleplayType, mode, options });
       
       // Reset services
-      openAIService.resetConversation();
-      voiceService.cleanup();
+      if (openAIService && typeof openAIService.resetConversation === 'function') {
+        openAIService.resetConversation();
+      }
+      
+      // Safely cleanup voice service
+      if (voiceService && typeof voiceService.cleanup === 'function') {
+        voiceService.cleanup();
+      }
 
       // Create session data
       const sessionData = {
@@ -140,21 +190,28 @@ export const RoleplayProvider = ({ children }) => {
       setTimeout(async () => {
         setCallState('connected');
         
-        // Start with prospect greeting - need to speak directly since session just started
+        // Start with prospect greeting
         const greeting = "Hello?";
         logger.log('🎭 AI will now speak the greeting:', greeting);
         
         try {
-          // Speak the greeting directly
-          logger.log('🔊 Attempting to speak greeting...');
-          await voiceService.speakText(greeting, {
-            voiceId: 'Joanna',
-            rate: 0.9,
-            pitch: 1.0
-          });
-          logger.log('✅ Greeting spoken successfully');
+          // Initialize voice service before speaking
+          const voiceInitialized = await initializeVoiceService();
+          
+          if (voiceInitialized && voiceService && typeof voiceService.speakText === 'function') {
+            logger.log('🔊 Attempting to speak greeting...');
+            await voiceService.speakText(greeting, {
+              voiceId: 'Joanna',
+              rate: 0.9,
+              pitch: 1.0
+            });
+            logger.log('✅ Greeting spoken successfully');
+          } else {
+            logger.warn('⚠️ Voice service not available, skipping greeting speech');
+          }
         } catch (error) {
           logger.error('❌ Error speaking greeting:', error);
+          setVoiceError('Voice service error: ' + error.message);
         }
         
         logger.log('✅ Roleplay session started successfully');
@@ -165,11 +222,17 @@ export const RoleplayProvider = ({ children }) => {
       logger.error('❌ Error starting roleplay session:', error);
       throw error;
     }
-  }, [setCurrentSession, setCallState]);
+  }, [initializeVoiceService]);
 
   const handleUserResponse = useCallback(async (response) => {
     try {
       setIsProcessing(true);
+      
+      // Check if openAI service is available
+      if (!openAIService || typeof openAIService.getProspectResponse !== 'function') {
+        throw new Error('OpenAI service not available');
+      }
+      
       const result = await openAIService.getProspectResponse(response, {
         roleplayType: currentSession?.roleplayType,
         mode: currentSession?.mode
@@ -181,7 +244,7 @@ export const RoleplayProvider = ({ children }) => {
     } finally {
       setIsProcessing(false);
     }
-  }, [currentSession, setIsProcessing]);
+  }, [currentSession]);
 
   const handleProspectResponse = useCallback(async (response) => {
     if (!currentSession) return;
@@ -189,17 +252,30 @@ export const RoleplayProvider = ({ children }) => {
     try {
       logger.log('🎭 Prospect speaking:', response);
       
-      // Speak the prospect's response
-      logger.log('🔊 Attempting to speak with voice service...');
-      const speechResult = await voiceService.speakText(response, {
-        voiceId: 'Joanna', // Female US voice
-        rate: 0.9,
-        pitch: 1.0
-      });
+      // Speak the prospect's response with error handling
+      let speechResult = null;
+      try {
+        const voiceInitialized = await initializeVoiceService();
+        
+        if (voiceInitialized && voiceService && typeof voiceService.speakText === 'function') {
+          logger.log('🔊 Attempting to speak with voice service...');
+          speechResult = await voiceService.speakText(response, {
+            voiceId: 'Joanna', // Female US voice
+            rate: 0.9,
+            pitch: 1.0
+          });
+          logger.log('✅ Speech completed:', speechResult);
+        } else {
+          logger.warn('⚠️ Voice service not available for prospect response');
+          speechResult = { success: false, error: 'Voice service not available' };
+        }
+      } catch (speechError) {
+        logger.error('❌ Error speaking prospect response:', speechError);
+        setVoiceError('Speech error: ' + speechError.message);
+        speechResult = { success: false, error: speechError.message };
+      }
       
-      logger.log('✅ Speech completed:', speechResult);
-      
-      // Update conversation history
+      // Update conversation history regardless of speech success
       setCurrentSession(prev => ({
         ...prev,
         conversationHistory: [
@@ -210,23 +286,35 @@ export const RoleplayProvider = ({ children }) => {
       
       return speechResult;
     } catch (error) {
-      logger.error('❌ Error speaking prospect response:', error);
+      logger.error('❌ Error handling prospect response:', error);
       throw error;
     }
-  }, [currentSession, setCurrentSession]);
+  }, [currentSession, initializeVoiceService]);
 
   const resetSession = useCallback(() => {
     setCurrentSession(null);
     setCallState('idle');
     setSessionResults(null);
     setIsProcessing(false);
-    openAIService.resetConversation();
-    voiceService.cleanup();
+    setVoiceError(null);
+    
+    // Safely reset services
+    if (openAIService && typeof openAIService.resetConversation === 'function') {
+      openAIService.resetConversation();
+    }
+    
+    if (voiceService && typeof voiceService.cleanup === 'function') {
+      voiceService.cleanup();
+    }
+    
+    initializationRef.current = false;
   }, []);
 
   const handleStart = useCallback(async () => {
     try {
       setIsProcessing(true);
+      setVoiceError(null);
+      
       const session = await startRoleplaySession(currentSession?.roleplayType, currentSession?.mode);
       if (!session) {
         throw new Error('Failed to start session');
@@ -235,6 +323,7 @@ export const RoleplayProvider = ({ children }) => {
       setLastSpeechTime(Date.now());
     } catch (error) {
       logger.error('Error starting roleplay:', error);
+      setVoiceError('Failed to start: ' + error.message);
     } finally {
       setIsProcessing(false);
     }
@@ -258,6 +347,7 @@ export const RoleplayProvider = ({ children }) => {
     sessionResults,
     isProcessing,
     isListening,
+    voiceError,
     
     // Actions
     startRoleplaySession,
@@ -270,7 +360,10 @@ export const RoleplayProvider = ({ children }) => {
     handleSilenceWarning,
     handleSilenceTimeout,
     handleStart,
-    handleEnd
+    handleEnd,
+    
+    // Utility
+    initializeVoiceService
   };
 
   return (

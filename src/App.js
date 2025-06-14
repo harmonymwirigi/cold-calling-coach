@@ -7,6 +7,7 @@ import { ProgressProvider } from './contexts/ProgressContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Layout from './components/layout/Layout';
 import ErrorBoundary from './components/ui/ErrorBoundary';
+import ServiceInitializer from './components/ServiceInitializer';
 
 // Page imports
 import Landing from './pages/Landing';
@@ -21,56 +22,58 @@ import './index.css';
 function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <ProgressProvider>
-          <Router>
-            <RoleplayProvider>
-              <div className="App">
-                <Routes>
-                  {/* Public Routes */}
-                  <Route path="/" element={<Landing />} />
-                  <Route path="/register" element={<Register />} />
-                  <Route path="/login" element={<Login />} />
-                  
-                  {/* Protected Routes */}
-                  <Route path="/dashboard" element={
-                    <ProtectedRoute>
-                      <Layout>
-                        <Dashboard />
-                      </Layout>
-                    </ProtectedRoute>
-                  } />
-                  
-                  <Route path="/roleplay/:type/:mode" element={
-                    <ProtectedRoute>
-                      <Roleplay />
-                    </ProtectedRoute>
-                  } />
-                  
-                  <Route path="/profile" element={
-                    <ProtectedRoute>
-                      <Layout>
-                        <Profile />
-                      </Layout>
-                    </ProtectedRoute>
-                  } />
-                  
-                  <Route path="/admin" element={
-                    <ProtectedRoute requireAdmin>
-                      <Layout>
-                        <Admin />
-                      </Layout>
-                    </ProtectedRoute>
-                  } />
-                  
-                  {/* Fallback */}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </div>
-            </RoleplayProvider>
-          </Router>
-        </ProgressProvider>
-      </AuthProvider>
+      <ServiceInitializer>
+        <AuthProvider>
+          <ProgressProvider>
+            <Router>
+              <RoleplayProvider>
+                <div className="App">
+                  <Routes>
+                    {/* Public Routes */}
+                    <Route path="/" element={<Landing />} />
+                    <Route path="/register" element={<Register />} />
+                    <Route path="/login" element={<Login />} />
+                    
+                    {/* Protected Routes */}
+                    <Route path="/dashboard" element={
+                      <ProtectedRoute>
+                        <Layout>
+                          <Dashboard />
+                        </Layout>
+                      </ProtectedRoute>
+                    } />
+                    
+                    <Route path="/roleplay/:type/:mode" element={
+                      <ProtectedRoute>
+                        <Roleplay />
+                      </ProtectedRoute>
+                    } />
+                    
+                    <Route path="/profile" element={
+                      <ProtectedRoute>
+                        <Layout>
+                          <Profile />
+                        </Layout>
+                      </ProtectedRoute>
+                    } />
+                    
+                    <Route path="/admin" element={
+                      <ProtectedRoute requireAdmin>
+                        <Layout>
+                          <Admin />
+                        </Layout>
+                      </ProtectedRoute>
+                    } />
+                    
+                    {/* Fallback */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </div>
+              </RoleplayProvider>
+            </Router>
+          </ProgressProvider>
+        </AuthProvider>
+      </ServiceInitializer>
     </ErrorBoundary>
   );
 }
