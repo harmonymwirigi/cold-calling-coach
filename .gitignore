@@ -1,23 +1,210 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Cold Calling Coach - Complete .gitignore
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# production
-/build
-
-# misc
-.DS_Store
+# 🔒 CRITICAL: Environment Variables (NEVER commit these!)
+.env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.development
+.env.test
+.env.production
+.env.staging
 
+# 📦 Dependencies
+node_modules/
+server/node_modules/
+api/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+
+# 🏗️ Production Build
+build/
+dist/
+out/
+.next/
+
+# 🧪 Testing
+coverage/
+.nyc_output
+
+# 📱 React Native (if used later)
+.expo/
+.expo-shared/
+
+# ⚙️ Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# 📄 Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# 🔧 Runtime/cache
+.cache/
+.parcel-cache/
+.tmp/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# 💻 IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 🖥️ OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# 🚀 Vercel
+.vercel
+.vercel.json
+
+# ☁️ Netlify (in case you switch)
+.netlify/
+
+# 📱 Capacitor (if mobile version added)
+.capacitor/
+android/
+ios/
+
+# 🎯 ESLint cache
+.eslintcache
+
+# 🔄 Optional npm cache directory
+.npm
+
+# 📊 Optional REPL history
+.node_repl_history
+
+# 📁 Output of 'npm pack'
+*.tgz
+
+# 🔐 Yarn Integrity file
+.yarn-integrity
+
+# 🗃️ dotenv environment variables file
+.env.backup
+
+# 🔧 parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# 📊 Next.js build output (if switching frameworks)
+.next
+
+# 🔨 Nuxt.js build / generate output (if switching frameworks)
+.nuxt
+dist
+
+# 📱 Gatsby files (if switching frameworks)
+.cache/
+public
+
+# 🔧 Vuepress build output (if switching frameworks)
+.vuepress/dist
+
+# 📊 Serverless directories
+.serverless/
+
+# 🔧 FuseBox cache
+.fusebox/
+
+# 📊 DynamoDB Local files
+.dynamodb/
+
+# 🔧 TernJS port file
+.tern-port
+
+# 🧪 Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# 📊 yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# 🔧 Storybook build outputs (if added later)
+storybook-static/
+
+# 📱 Temporary folders
+tmp/
+temp/
+
+# 🔒 Local development certificates
+*.pem
+
+# 🧪 Jest coverage directory
+coverage/
+
+# 📊 TypeScript cache (if converting to TypeScript)
+*.tsbuildinfo
+
+# 🔧 Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# 📊 Optional eslint cache
+.eslintcache
+
+# 🔧 Stores VSCode versions used for testing VSCode extensions
+.vscode-test/
+
+# 📱 React Native temporary files
+.metro-health-check*
+
+# 🚀 Deployment files (keep local versions private)
+deployment-config.json
+deploy.sh
+
+# 🔐 Database backups (if any)
+*.sql
+*.db
+*.sqlite
+*.sqlite3
+
+# 📊 Analytics and tracking data
+analytics/
+tracking/
+
+# 🔧 Local configuration files
+config.local.js
+config.local.json
+
+# 📱 Mobile build artifacts
+*.apk
+*.ipa
+*.aab
+
+# 🔒 Security files
+.secrets/
+secrets.json
+private-keys/
+
+# 📊 Documentation build
+docs/build/
+
+# ⚠️ IMPORTANT NOTES:
+# 1. Never commit .env files - they contain API keys!
+# 2. node_modules/ is rebuilt during deployment
+# 3. build/ is created fresh during Vercel deployment
+# 4. .vercel/ contains deployment settings (auto-generated)
