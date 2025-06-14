@@ -1,4 +1,4 @@
-// src/components/roleplay/FunctionalPhoneInterface.jsx - DATABASE SCHEMA FIXED
+// src/components/roleplay/FunctionalPhoneInterface.jsx - CLEAN JSX VERSION
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle, Send } from 'lucide-react';
@@ -47,8 +47,6 @@ const FunctionalPhoneInterface = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [userSpeechText, setUserSpeechText] = useState('');
   const [voiceServiceAvailable, setVoiceServiceAvailable] = useState(false);
-  
-  // Text input state for fallback
   const [textInput, setTextInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
 
@@ -56,6 +54,7 @@ const FunctionalPhoneInterface = () => {
   const durationInterval = useRef(null);
   const componentInitAttempted = useRef(false);
   const textInputRef = useRef(null);
+  const autoMicTimeout = useRef(null);
 
   // Character data for the roleplay
   const characters = [
@@ -82,16 +81,13 @@ const FunctionalPhoneInterface = () => {
 
         logger.log('🚀 Initializing roleplay:', { type, mode });
 
-        // Check if user has access to this roleplay
         const access = getRoleplayAccess(type);
         if (!access?.unlocked) {
           throw new Error(access?.reason || 'Access denied to this roleplay');
         }
 
-        // Try to initialize voice service but don't wait too long
         logger.log('🎤 Attempting to initialize voice service...');
         try {
-          // Give voice service a better chance to initialize
           const voiceInitPromise = checkVoiceServiceAvailability();
           const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(false), 5000));
           
@@ -108,7 +104,6 @@ const FunctionalPhoneInterface = () => {
           setVoiceServiceAvailable(false);
         }
 
-        // Start the roleplay session regardless of voice service status
         await startRoleplaySession(type, mode, {
           character: currentCharacter
         });
@@ -130,12 +125,11 @@ const FunctionalPhoneInterface = () => {
     };
   }, [type, mode, startRoleplaySession, getRoleplayAccess]);
 
-  // Check voice service availability with timeout
+  // Check voice service availability
   const checkVoiceServiceAvailability = async () => {
     try {
       logger.log('🎤 Checking voice service availability...');
       
-      // Check browser compatibility first
       if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         logger.warn('Speech recognition not supported in this browser');
         return false;
@@ -146,7 +140,6 @@ const FunctionalPhoneInterface = () => {
         return false;
       }
 
-      // Try to initialize voice service
       if (voiceService && typeof voiceService.initialize === 'function') {
         await voiceService.initialize();
         return voiceService.isInitialized;
@@ -164,9 +157,15 @@ const FunctionalPhoneInterface = () => {
     if (callState === 'connected' && currentSession) {
       startDurationTimer();
       
-      // Set initial greeting message when connected
-      setTimeout(() => {
+      setTimeout(async () => {
         setCurrentMessage("Hello?");
+        
+        if (voiceServiceAvailable) {
+          logger.log('🎤 Auto-starting microphone for initial greeting...');
+          setTimeout(() => {
+            handleStartListening();
+          }, 1000);
+        }
       }, 500);
     } else if (callState === 'ended') {
       clearTimers();
@@ -176,7 +175,7 @@ const FunctionalPhoneInterface = () => {
     return () => {
       clearTimers();
     };
-  }, [callState, currentSession]);
+  }, [callState, currentSession, voiceServiceAvailable]);
 
   // Handle session results
   useEffect(() => {
@@ -194,6 +193,28 @@ const FunctionalPhoneInterface = () => {
     }
   }, [voiceError]);
 
+  // Auto-start microphone after AI finishes speaking
+  useEffect(() => {
+    if (!isSpeaking && !isListening && !isProcessing && voiceServiceAvailable && currentMessage && callState === 'connected') {
+      if (autoMicTimeout.current) {
+        clearTimeout(autoMicTimeout.current);
+      }
+      
+      autoMicTimeout.current = setTimeout(() => {
+        if (!isListening && !isSpeaking && !isProcessing && callState === 'connected') {
+          logger.log('🎤 Auto-starting microphone after AI response...');
+          handleStartListening();
+        }
+      }, 1500);
+    }
+    
+    return () => {
+      if (autoMicTimeout.current) {
+        clearTimeout(autoMicTimeout.current);
+      }
+    };
+  }, [isSpeaking, isListening, isProcessing, voiceServiceAvailable, currentMessage, callState]);
+
   const startDurationTimer = () => {
     clearTimers();
     durationInterval.current = setInterval(() => {
@@ -205,6 +226,10 @@ const FunctionalPhoneInterface = () => {
     if (durationInterval.current) {
       clearInterval(durationInterval.current);
       durationInterval.current = null;
+    }
+    if (autoMicTimeout.current) {
+      clearTimeout(autoMicTimeout.current);
+      autoMicTimeout.current = null;
     }
   };
 
@@ -234,13 +259,11 @@ const FunctionalPhoneInterface = () => {
       logger.log('🎤 Starting to listen...');
       
       const result = await startListening(
-        // onResult callback
         async (transcript, confidence) => {
           logger.log('📝 User said:', transcript);
           setUserSpeechText(transcript);
           await processUserInput(transcript, confidence);
         },
-        // onError callback
         (error) => {
           logger.error('❌ Voice recognition error:', error);
           setError(error);
@@ -258,7 +281,6 @@ const FunctionalPhoneInterface = () => {
     }
   };
 
-  // Handle text input submission
   const handleTextSubmit = async (e) => {
     e.preventDefault();
     
@@ -274,7 +296,7 @@ const FunctionalPhoneInterface = () => {
     logger.log('⌨️ User typed:', userText);
     
     try {
-      await processUserInput(userText, 1.0); // High confidence for typed input
+      await processUserInput(userText, 1.0);
     } catch (error) {
       logger.error('❌ Error processing typed input:', error);
       setError('Failed to process your message. Please try again.');
@@ -292,33 +314,39 @@ const FunctionalPhoneInterface = () => {
     try {
       logger.log('🔄 Processing user input:', transcript);
 
-      // Log pronunciation issues for low confidence (voice only)
       if (confidence < 0.7) {
         logger.log('📊 Low confidence speech detected:', confidence);
       }
 
-      // Process with AI and get response
       const aiResult = await handleUserResponse(transcript);
       
       if (aiResult?.success) {
         setCurrentMessage(aiResult.response);
         setEvaluation(aiResult.evaluation);
 
-        // Speak the AI response if not muted and voice service is available
-        if (!isMuted && aiResult.response && voiceServiceAvailable) {
+        if (!isMuted && aiResult.response) {
           try {
             logger.log('🗣️ AI speaking:', aiResult.response);
-            await speakText(aiResult.response, {
-              voiceId: 'Joanna',
-              rate: 0.9
-            });
+            
+            if (voiceServiceAvailable && voiceService) {
+              await speakText(aiResult.response, {
+                rate: 0.9,
+                pitch: 1.0,
+                volume: 0.8
+              });
+            } else {
+              await speakWithBrowserFallback(aiResult.response);
+            }
           } catch (speechError) {
             logger.warn('❌ AI speech failed:', speechError);
-            // Don't block the conversation if speech fails
+            try {
+              await speakWithBrowserFallback(aiResult.response);
+            } catch (fallbackError) {
+              logger.error('❌ Browser speech fallback also failed:', fallbackError);
+            }
           }
         }
 
-        // Check if call should end
         if (aiResult.nextStage === 'hang_up' || aiResult.shouldHangUp) {
           logger.log('📞 Call ending due to stage:', aiResult.nextStage);
           setTimeout(() => {
@@ -335,13 +363,52 @@ const FunctionalPhoneInterface = () => {
     }
   };
 
+  const speakWithBrowserFallback = async (text) => {
+    if (!('speechSynthesis' in window)) {
+      logger.warn('Speech synthesis not supported');
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      logger.log('🗣️ Using browser speech synthesis fallback');
+      
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+      utterance.volume = 0.8;
+      utterance.lang = 'en-US';
+
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.lang.includes('en-US') && voice.name.toLowerCase().includes('female')
+      ) || voices.find(voice => voice.lang.includes('en-US')) || voices[0];
+      
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+
+      utterance.onend = () => {
+        logger.log('✅ Browser speech synthesis completed');
+        resolve();
+      };
+
+      utterance.onerror = (event) => {
+        logger.error('❌ Browser speech synthesis error:', event.error);
+        reject(new Error(`Speech synthesis error: ${event.error}`));
+      };
+
+      window.speechSynthesis.speak(utterance);
+    });
+  };
+
   const handleCallEnd = async (reason = 'user_ended') => {
     try {
       logger.log('🏁 Ending call:', reason);
       
       const sessionResult = await endSession(reason);
       
-      // Update progress based on result
       if (sessionResult) {
         await updateProgressData(sessionResult);
       }
@@ -353,25 +420,20 @@ const FunctionalPhoneInterface = () => {
 
   const updateProgressData = async (sessionResult) => {
     try {
-      // FIXED: Remove the problematic 'last_completed' field
       const progressUpdate = {
         total_attempts: 1,
         total_passes: sessionResult.passed ? 1 : 0
-        // Removed last_completed - this field doesn't exist in the database
       };
 
-      // For marathon mode, update marathon passes
       if (mode === 'marathon' && sessionResult.passed) {
         const currentProgress = getRoleplayAccess(type);
         progressUpdate.marathon_passes = (currentProgress.marathon_passes || 0) + 1;
         
-        // Unlock next module if enough passes
         if (progressUpdate.marathon_passes >= 6) {
           progressUpdate.unlock_expiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         }
       }
 
-      // For legend mode
       if (mode === 'legend') {
         progressUpdate.legend_completed = sessionResult.passed;
         progressUpdate.legend_attempt_used = true;
@@ -383,7 +445,6 @@ const FunctionalPhoneInterface = () => {
 
     } catch (error) {
       logger.error('❌ Error updating progress:', error);
-      // Don't throw - let the session complete even if progress update fails
     }
   };
 
@@ -391,6 +452,9 @@ const FunctionalPhoneInterface = () => {
     setIsMuted(!isMuted);
     if (!isMuted) {
       stopSpeaking();
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
     }
   };
 
@@ -398,6 +462,9 @@ const FunctionalPhoneInterface = () => {
     clearTimers();
     stopListening();
     stopSpeaking();
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
     resetSession();
   };
 
@@ -430,7 +497,6 @@ const FunctionalPhoneInterface = () => {
     navigate('/dashboard');
   };
 
-  // Show loading while initializing
   if (isInitializing) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 to-blue-900 flex items-center justify-center">
@@ -444,7 +510,6 @@ const FunctionalPhoneInterface = () => {
     );
   }
 
-  // Show results modal
   if (showResults && sessionResults) {
     return (
       <CallResults
@@ -466,7 +531,6 @@ const FunctionalPhoneInterface = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-blue-900 flex flex-col">
-      {/* Header */}
       <div className="bg-black/20 text-white p-4 flex items-center justify-between">
         <button
           onClick={goBack}
@@ -481,7 +545,6 @@ const FunctionalPhoneInterface = () => {
         <div className="w-32" />
       </div>
 
-      {/* Error Message */}
       {error && (
         <div className={`p-4 text-center flex items-center justify-center ${
           voiceServiceAvailable ? 'bg-red-600 text-white' : 'bg-yellow-600 text-white'
@@ -491,10 +554,9 @@ const FunctionalPhoneInterface = () => {
         </div>
       )}
 
-      {/* Voice Service Status */}
       {!voiceServiceAvailable && (
         <div className="bg-blue-600/20 text-blue-200 p-3 text-center text-sm">
-          💡 Voice service not available - you can practice by typing responses. 
+          💡 Voice service not available - using text input. For voice: use Chrome browser and allow microphone access
           <button 
             onClick={() => window.location.reload()} 
             className="ml-2 underline hover:text-blue-100"
@@ -504,9 +566,7 @@ const FunctionalPhoneInterface = () => {
         </div>
       )}
 
-      {/* Main Interface */}
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-white">
-        {/* Call Status */}
         <div className="mb-6 text-center">
           <div className="flex items-center justify-center space-x-2 mb-2">
             <div className={`w-3 h-3 rounded-full ${getCallStateColor()}`}></div>
@@ -520,13 +580,11 @@ const FunctionalPhoneInterface = () => {
           )}
         </div>
 
-        {/* Character Avatar */}
         <div className="relative mb-6">
           <div className="w-40 h-40 bg-gradient-to-b from-blue-100 to-blue-200 rounded-full flex items-center justify-center text-6xl mb-4 shadow-2xl">
             {currentCharacter.avatar}
           </div>
           
-          {/* Speaking indicator */}
           {isSpeaking && (
             <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2">
               <div className="flex space-x-1">
@@ -541,7 +599,6 @@ const FunctionalPhoneInterface = () => {
             </div>
           )}
 
-          {/* Listening indicator */}
           {isListening && (
             <div className="absolute -top-2 -right-2">
               <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center animate-pulse">
@@ -550,7 +607,6 @@ const FunctionalPhoneInterface = () => {
             </div>
           )}
 
-          {/* Typing indicator */}
           {isTyping && (
             <div className="absolute -top-2 -right-2">
               <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
@@ -560,7 +616,6 @@ const FunctionalPhoneInterface = () => {
           )}
         </div>
 
-        {/* Character Info */}
         <div className="text-center mb-6">
           <h3 className="text-xl font-semibold mb-1">{currentCharacter.name}</h3>
           <p className="text-blue-200 text-sm">{currentCharacter.personality}</p>
@@ -568,7 +623,6 @@ const FunctionalPhoneInterface = () => {
           <p className="text-blue-400 text-xs">{currentCharacter.industry}</p>
         </div>
 
-        {/* Current Message */}
         {currentMessage && callState === 'connected' && (
           <div className="bg-white/10 backdrop-blur rounded-lg p-4 mb-6 max-w-md text-center border border-white/20">
             <p className="text-xs text-blue-200 mb-2">💬 Prospect says:</p>
@@ -576,7 +630,6 @@ const FunctionalPhoneInterface = () => {
           </div>
         )}
 
-        {/* User Speech Display */}
         {userSpeechText && (
           <div className="bg-blue-600/20 backdrop-blur rounded-lg p-3 mb-4 max-w-md text-center border border-blue-400/30">
             <p className="text-xs text-blue-200 mb-1">{voiceServiceAvailable ? '🎤 You said:' : '⌨️ You typed:'}</p>
@@ -584,7 +637,6 @@ const FunctionalPhoneInterface = () => {
           </div>
         )}
 
-        {/* Voice Status */}
         <div className="text-center mb-8 min-h-[2rem]">
           {callState === 'dialing' && (
             <div className="flex items-center justify-center space-x-2">
@@ -602,7 +654,7 @@ const FunctionalPhoneInterface = () => {
           {callState === 'connected' && !isListening && !isSpeaking && !isProcessing && !isTyping && (
             <div className="space-y-2">
               <p className="text-blue-200">
-                {voiceServiceAvailable ? '🎤 Tap microphone to speak' : '⌨️ Type your response below'}
+                {voiceServiceAvailable ? '🎤 Microphone will auto-open after AI speaks' : '⌨️ Type your response below'}
               </p>
               {voiceServiceAvailable && process.env.NODE_ENV === 'development' && (
                 <button
@@ -635,7 +687,6 @@ const FunctionalPhoneInterface = () => {
           )}
         </div>
 
-        {/* Text Input - Always show when connected */}
         {callState === 'connected' && !isProcessing && !isTyping && (
           <div className="w-full max-w-md mb-6">
             <form onSubmit={handleTextSubmit} className="flex space-x-2">
@@ -644,7 +695,7 @@ const FunctionalPhoneInterface = () => {
                 type="text"
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                placeholder={voiceServiceAvailable ? "Type here or use voice..." : "Type your response here..."}
+                placeholder={voiceServiceAvailable ? "Type here or speak when mic opens..." : "Type your response here..."}
                 className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/50 focus:outline-none focus:border-blue-400 focus:bg-white/20"
                 disabled={isProcessing || isTyping}
                 autoFocus={!voiceServiceAvailable}
@@ -663,12 +714,9 @@ const FunctionalPhoneInterface = () => {
           </div>
         )}
 
-        {/* Controls */}
         <div className="flex flex-col items-center space-y-6">
-          {/* Voice Controls (only show if voice is available) */}
           {callState === 'connected' && voiceServiceAvailable && (
             <div className="flex space-x-8">
-              {/* Mute Button */}
               <button
                 onClick={handleMuteToggle}
                 className={`
@@ -677,12 +725,11 @@ const FunctionalPhoneInterface = () => {
                     ? 'bg-gray-600 hover:bg-gray-700' 
                     : 'bg-white/20 hover:bg-white/30'}
                 `}
-                title={isMuted ? 'Unmute' : 'Mute'}
+                title={isMuted ? 'Unmute AI Voice' : 'Mute AI Voice'}
               >
                 {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
               </button>
 
-              {/* Mic Button */}
               <button
                 onClick={isListening ? stopListening : handleStartListening}
                 disabled={isSpeaking || isProcessing}
@@ -700,7 +747,6 @@ const FunctionalPhoneInterface = () => {
             </div>
           )}
 
-          {/* Hang Up Button */}
           <button
             onClick={() => handleCallEnd('user_ended')}
             disabled={callState === 'ended'}
@@ -711,7 +757,6 @@ const FunctionalPhoneInterface = () => {
           </button>
         </div>
 
-        {/* Evaluation Preview */}
         {evaluation && callState === 'connected' && (
           <div className="mt-6 bg-black/20 rounded-lg p-4 max-w-sm w-full">
             <div className="flex items-center space-x-2 mb-2">
@@ -730,20 +775,18 @@ const FunctionalPhoneInterface = () => {
         )}
       </div>
 
-      {/* Instructions */}
       <div className="bg-black/20 p-4 text-center text-sm text-white/80">
         {callState === 'dialing' && "Connecting to prospect..."}
-        {callState === 'connected' && !isListening && !isSpeaking && voiceServiceAvailable && "Use microphone or type your response"}
+        {callState === 'connected' && !isListening && !isSpeaking && voiceServiceAvailable && "Microphone will auto-open after AI speaks - or type your response"}
         {callState === 'connected' && !isListening && !isSpeaking && !voiceServiceAvailable && "Type your response in the text box above"}
-        {callState === 'connected' && isListening && "Speaking... Release when finished"}
-        {callState === 'connected' && isSpeaking && "AI is responding..."}
+        {callState === 'connected' && isListening && "Speaking... Speak clearly into your microphone"}
+        {callState === 'connected' && isSpeaking && "AI is responding... Microphone will open automatically"}
         {callState === 'ended' && "Call completed - review your results"}
       </div>
     </div>
   );
 };
 
-// Call Results Component (unchanged)
 const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue, onRetry }) => {
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -784,7 +827,6 @@ const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue,
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-xl shadow-xl overflow-hidden">
-          {/* Header */}
           <div className={`bg-${result.color}-500 text-white p-8 text-center`}>
             <div className="text-6xl mb-4">{result.icon}</div>
             <h1 className="text-3xl font-bold mb-2">{result.title}</h1>
@@ -794,9 +836,7 @@ const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue,
             </p>
           </div>
 
-          {/* Results */}
           <div className="p-8">
-            {/* Quick Stats */}
             <div className="grid grid-cols-3 gap-4 mb-8">
               <div className="text-center">
                 <div className="text-2xl font-bold text-gray-900">{formatTime(duration)}</div>
@@ -816,7 +856,6 @@ const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue,
               </div>
             </div>
 
-            {/* Feedback */}
             {evaluation.feedback && (
               <div className="bg-gray-50 rounded-lg p-6 mb-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">📝 Feedback</h3>
@@ -824,7 +863,6 @@ const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue,
               </div>
             )}
 
-            {/* Actions */}
             <div className="flex space-x-4">
               <button
                 onClick={onRetry}
