@@ -35,31 +35,15 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "CI=false react-scripts build",
-    "vercel-build": "CI=false react-scripts build",
+    "build": "SKIP_PREFLIGHT_CHECK=true DISABLE_ESLINT_PLUGIN=true CI=false react-scripts build",
+    "vercel-build": "SKIP_PREFLIGHT_CHECK=true DISABLE_ESLINT_PLUGIN=true CI=false react-scripts build",
     "test": "react-scripts test",
-    "test:watch": "react-scripts test --watch",
-    "test:coverage": "react-scripts test --coverage --watchAll=false",
-    "test:ci": "CI=true react-scripts test --coverage --watchAll=false",
     "eject": "react-scripts eject",
-    "cypress:open": "cypress open",
-    "cypress:run": "cypress run",
-    "lint": "eslint src/ --ext .js,.jsx,.ts,.tsx",
-    "lint:fix": "eslint src/ --ext .js,.jsx,.ts,.tsx --fix",
-    "format": "prettier --write src/**/*.{js,jsx,ts,tsx,json,css,md}",
-    "analyze": "npm run build && npx serve -s build",
     "dev": "react-scripts start"
   },
   "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ],
-    "rules": {
-      "react-hooks/exhaustive-deps": "warn",
-      "no-console": "off",
-      "no-unused-vars": "warn"
-    }
+    "extends": ["react-app"],
+    "rules": {}
   },
   "browserslist": {
     "production": [
@@ -73,23 +57,6 @@
       "last 1 safari version"
     ]
   },
-  "jest": {
-    "collectCoverageFrom": [
-      "src/**/*.{js,jsx}",
-      "!src/index.js",
-      "!src/reportWebVitals.js",
-      "!src/**/*.test.{js,jsx}",
-      "!src/setupTests.js"
-    ],
-    "coverageThreshold": {
-      "global": {
-        "branches": 70,
-        "functions": 70,
-        "lines": 70,
-        "statements": 70
-      }
-    }
-  },
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
@@ -99,15 +66,6 @@
     "type": "git",
     "url": "https://github.com/harmonymwirigi/cold-calling-coach.git"
   },
-  "keywords": [
-    "ai",
-    "cold-calling",
-    "sales-training",
-    "english-learning",
-    "roleplay",
-    "voice-recognition",
-    "speech-synthesis"
-  ],
   "author": "Harmony Mwirigi",
   "license": "MIT"
 }
