@@ -2,20 +2,11 @@
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 
-// eslint-disable-next-line no-console
-const log = (...args) => isDevelopment && logger.log(...args);
-// eslint-disable-next-line no-console
-const error = (...args) => isDevelopment && logger.error(...args);
-// eslint-disable-next-line no-console
-const warn = (...args) => isDevelopment && logger.warn(...args);
-// eslint-disable-next-line no-console
-const info = (...args) => isDevelopment && logger.info(...args);
-
 const logger = {
-  log,
-  error,
-  warn,
-  info
+  log: (...args) => isDevelopment && console.log(...args),
+  error: (...args) => isDevelopment && console.error(...args),
+  warn: (...args) => isDevelopment && console.warn(...args),
+  info: (...args) => isDevelopment && console.info(...args)
 };
 
 export default logger;

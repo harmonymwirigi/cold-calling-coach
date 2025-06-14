@@ -53,29 +53,6 @@
     "dev": "react-scripts start",
     "vercel-build": "npm run build"
   },
-    "eslintConfig": {
-      "extends": [
-        "react-app",
-        "react-app/jest"
-      ],
-      "rules": {
-        "react-hooks/exhaustive-deps": "warn",
-        "no-unused-vars": "warn"
-      },
-      "env": {
-        "development": {
-          "rules": {
-            "no-console": "warn"
-          }
-        },
-        "production": {
-          "rules": {
-            "no-console": "off"
-          }
-        }
-      }
-    }
-  ,
   "browserslist": {
     "production": [
       ">0.2%",

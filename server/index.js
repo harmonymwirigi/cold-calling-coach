@@ -6,6 +6,14 @@ const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
+// Create a simple logger for server-side
+const logger = {
+  log: (...args) => console.log(...args),
+  error: (...args) => console.error(...args),
+  warn: (...args) => console.warn(...args),
+  info: (...args) => console.info(...args)
+};
+
 const app = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
