@@ -55,7 +55,7 @@ export default async function handler(req, res) {
     const result = await resend.emails.send(emailData);
     return res.status(200).json({ success: true, data: result });
   } catch (error) {
-    console.error('Error sending email:', error);
+    logger.error('Error sending email:', error);
     return res.status(500).json({ error: error.message });
   }
 }

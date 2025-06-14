@@ -209,9 +209,9 @@ curl http://localhost:3001/api/test-db
 Open browser console and run:
 ```javascript
 // Check environment variables
-console.log('OpenAI:', !!process.env.REACT_APP_OPENAI_API_KEY);
-console.log('AWS:', !!process.env.REACT_APP_AWS_ACCESS_KEY_ID);
-console.log('Supabase:', !!process.env.REACT_APP_SUPABASE_URL);
+logger.log('OpenAI:', !!process.env.REACT_APP_OPENAI_API_KEY);
+logger.log('AWS:', !!process.env.REACT_APP_AWS_ACCESS_KEY_ID);
+logger.log('Supabase:', !!process.env.REACT_APP_SUPABASE_URL);
 ```
 
 ### 3. Test Voice Service
@@ -222,8 +222,8 @@ import { voiceService } from './services/voiceService';
 
 // Test initialization
 voiceService.initialize()
-  .then(() => console.log('✅ Voice service ready'))
-  .catch(err => console.error('❌ Voice failed:', err));
+  .then(() => logger.log('✅ Voice service ready'))
+  .catch(err => logger.error('❌ Voice failed:', err));
 ```
 
 ## 🎯 Using the Roleplay System

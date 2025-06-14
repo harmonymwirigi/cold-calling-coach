@@ -37,7 +37,7 @@ export const usePWA = () => {
     if (!installPrompt) return;
 
     const result = await installPrompt.prompt();
-    console.log('Install prompt result:', result);
+    logger.log('Install prompt result:', result);
     
     setInstallPrompt(null);
     setIsInstallable(false);

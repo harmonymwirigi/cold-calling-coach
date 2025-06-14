@@ -10,10 +10,10 @@ const app = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Initialize Supabase client with detailed logging
-console.log('🔍 Environment Check:');
-console.log('- SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Set' : '❌ Missing');
-console.log('- SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Set' : '❌ Missing');
-console.log('- RESEND_API_KEY:', process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing');
+logger.log('🔍 Environment Check:');
+logger.log('- SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Set' : '❌ Missing');
+logger.log('- SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Set' : '❌ Missing');
+logger.log('- RESEND_API_KEY:', process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -26,7 +26,7 @@ app.use(express.json());
 // Test database connection endpoint
 app.get('/api/test-db', async (req, res) => {
   try {
-    console.log('🧪 Testing database connection...');
+    logger.log('🧪 Testing database connection...');
     
     // Test basic connection
     const { data, error } = await supabase
@@ -35,7 +35,7 @@ app.get('/api/test-db', async (req, res) => {
       .limit(1);
 
     if (error) {
-      console.error('❌ Database test failed:', error);
+      logger.error('❌ Database test failed:', error);
       return res.status(500).json({ 
         error: 'Database connection failed',
         details: error.message,
@@ -44,14 +44,14 @@ app.get('/api/test-db', async (req, res) => {
       });
     }
 
-    console.log('✅ Database connection successful');
+    logger.log('✅ Database connection successful');
     res.json({ 
       success: true, 
       message: 'Database connection working',
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('❌ Database test error:', error);
+    logger.error('❌ Database test error:', error);
     res.status(500).json({ 
       error: 'Database test failed',
       message: error.message 
@@ -61,15 +61,15 @@ app.get('/api/test-db', async (req, res) => {
 
 // Send verification email endpoint with detailed debugging
 app.post('/api/send-verification', async (req, res) => {
-  console.log('\n🚀 === VERIFICATION REQUEST START ===');
-  console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
+  logger.log('\n🚀 === VERIFICATION REQUEST START ===');
+  logger.log('📝 Request body:', JSON.stringify(req.body, null, 2));
   
   try {
     const { email, firstName } = req.body;
 
     // Validate required fields
     if (!email || !firstName) {
-      console.log('❌ Validation failed: Missing required fields');
+      logger.log('❌ Validation failed: Missing required fields');
       return res.status(400).json({ 
         error: 'Missing required fields',
         message: 'Email and firstName are required' 
@@ -79,24 +79,24 @@ app.post('/api/send-verification', async (req, res) => {
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      console.log('❌ Validation failed: Invalid email format');
+      logger.log('❌ Validation failed: Invalid email format');
       return res.status(400).json({ 
         error: 'Invalid email format',
         message: 'Please provide a valid email address' 
       });
     }
 
-    console.log(`✅ Validation passed for: ${email}`);
+    logger.log(`✅ Validation passed for: ${email}`);
 
     // Generate 6-digit verification code
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    console.log(`🔢 Generated verification code: ${verificationCode}`);
-    console.log(`⏰ Expires at: ${expiresAt.toISOString()}`);
+    logger.log(`🔢 Generated verification code: ${verificationCode}`);
+    logger.log(`⏰ Expires at: ${expiresAt.toISOString()}`);
 
     // Check for existing unverified verification
-    console.log('🔍 Checking for existing verifications...');
+    logger.log('🔍 Checking for existing verifications...');
     const { data: existingVerification, error: findError } = await supabase
       .from('email_verifications')
       .select('*')
@@ -105,7 +105,7 @@ app.post('/api/send-verification', async (req, res) => {
       .single();
 
     if (findError && findError.code !== 'PGRST116') { // PGRST116 = no rows found (which is OK)
-      console.error('❌ Error checking existing verifications:', findError);
+      logger.error('❌ Error checking existing verifications:', findError);
       return res.status(500).json({ 
         error: 'Database query failed',
         message: 'Failed to check existing verifications',
@@ -115,7 +115,7 @@ app.post('/api/send-verification', async (req, res) => {
 
     // Clean up any existing unverified verification for this email
     if (existingVerification) {
-      console.log('🧹 Cleaning up existing unverified verification...');
+      logger.log('🧹 Cleaning up existing unverified verification...');
       const { error: deleteError } = await supabase
         .from('email_verifications')
         .delete()
@@ -123,20 +123,20 @@ app.post('/api/send-verification', async (req, res) => {
         .eq('verified', false);
 
       if (deleteError) {
-        console.error('❌ Error deleting existing verification:', deleteError);
+        logger.error('❌ Error deleting existing verification:', deleteError);
         return res.status(500).json({ 
           error: 'Database cleanup failed',
           message: 'Failed to clean up existing verifications',
           details: deleteError.message
         });
       }
-      console.log('✅ Existing verification cleaned up');
+      logger.log('✅ Existing verification cleaned up');
     } else {
-      console.log('✅ No existing unverified verifications found');
+      logger.log('✅ No existing unverified verifications found');
     }
 
     // Store verification code in Supabase
-    console.log('💾 Storing new verification code...');
+    logger.log('💾 Storing new verification code...');
     const insertData = {
       email,
       first_name: firstName,
@@ -146,7 +146,7 @@ app.post('/api/send-verification', async (req, res) => {
       verified: false
     };
     
-    console.log('📊 Insert data:', JSON.stringify(insertData, null, 2));
+    logger.log('📊 Insert data:', JSON.stringify(insertData, null, 2));
 
     const { data: verification, error: verificationError } = await supabase
       .from('email_verifications')
@@ -155,7 +155,7 @@ app.post('/api/send-verification', async (req, res) => {
       .single();
 
     if (verificationError) {
-      console.error('❌ Database insert error:', {
+      logger.error('❌ Database insert error:', {
         message: verificationError.message,
         details: verificationError.details,
         hint: verificationError.hint,
@@ -171,10 +171,10 @@ app.post('/api/send-verification', async (req, res) => {
       });
     }
 
-    console.log('✅ Verification code stored successfully:', verification.id);
+    logger.log('✅ Verification code stored successfully:', verification.id);
 
     // Send verification email using Resend
-    console.log('📧 Sending verification email...');
+    logger.log('📧 Sending verification email...');
     
     const emailHtml = `
       <!DOCTYPE html>
@@ -231,7 +231,7 @@ app.post('/api/send-verification', async (req, res) => {
     });
 
     if (emailError) {
-      console.error('❌ Resend email error:', emailError);
+      logger.error('❌ Resend email error:', emailError);
       // Clean up the verification record if email fails
       await supabase
         .from('email_verifications')
@@ -245,8 +245,8 @@ app.post('/api/send-verification', async (req, res) => {
       });
     }
 
-    console.log('✅ Verification email sent successfully:', emailResult?.id);
-    console.log('🎉 === VERIFICATION REQUEST COMPLETE ===\n');
+    logger.log('✅ Verification email sent successfully:', emailResult?.id);
+    logger.log('🎉 === VERIFICATION REQUEST COMPLETE ===\n');
 
     res.status(200).json({ 
       success: true,
@@ -256,8 +256,8 @@ app.post('/api/send-verification', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('💥 Unexpected error in send-verification:', error);
-    console.log('🔍 Error details:', {
+    logger.error('💥 Unexpected error in send-verification:', error);
+    logger.log('🔍 Error details:', {
       name: error.name,
       message: error.message,
       stack: error.stack
@@ -273,21 +273,21 @@ app.post('/api/send-verification', async (req, res) => {
 
 // Verify email endpoint with debugging
 app.post('/api/verify-email', async (req, res) => {
-  console.log('\n🔐 === EMAIL VERIFICATION START ===');
-  console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
+  logger.log('\n🔐 === EMAIL VERIFICATION START ===');
+  logger.log('📝 Request body:', JSON.stringify(req.body, null, 2));
   
   try {
     const { email, code } = req.body;
 
     if (!email || !code) {
-      console.log('❌ Validation failed: Missing email or code');
+      logger.log('❌ Validation failed: Missing email or code');
       return res.status(400).json({
         error: 'Missing required fields',
         message: 'Email and verification code are required'
       });
     }
 
-    console.log(`🔍 Looking for verification: ${email} with code: ${code}`);
+    logger.log(`🔍 Looking for verification: ${email} with code: ${code}`);
 
     // Find the verification record
     const { data, error } = await supabase
@@ -300,7 +300,7 @@ app.post('/api/verify-email', async (req, res) => {
       .limit(1);
 
     if (error) {
-      console.error('❌ Database query error:', error);
+      logger.error('❌ Database query error:', error);
       return res.status(500).json({
         error: 'Database error',
         message: 'Failed to verify code',
@@ -308,10 +308,10 @@ app.post('/api/verify-email', async (req, res) => {
       });
     }
 
-    console.log(`📊 Found ${data.length} matching verification(s)`);
+    logger.log(`📊 Found ${data.length} matching verification(s)`);
 
     if (!data.length) {
-      console.log('❌ No matching verification found');
+      logger.log('❌ No matching verification found');
       return res.status(400).json({
         error: 'Invalid verification code',
         message: 'The verification code is incorrect or has already been used'
@@ -319,23 +319,23 @@ app.post('/api/verify-email', async (req, res) => {
     }
 
     const verification = data[0];
-    console.log('✅ Found verification:', verification.id);
+    logger.log('✅ Found verification:', verification.id);
 
     // Check if expired
     const now = new Date();
     const expiresAt = new Date(verification.expires_at);
-    console.log(`⏰ Current time: ${now.toISOString()}`);
-    console.log(`⏰ Expires at: ${expiresAt.toISOString()}`);
+    logger.log(`⏰ Current time: ${now.toISOString()}`);
+    logger.log(`⏰ Expires at: ${expiresAt.toISOString()}`);
     
     if (now > expiresAt) {
-      console.log('❌ Verification code has expired');
+      logger.log('❌ Verification code has expired');
       return res.status(400).json({
         error: 'Code expired',
         message: 'The verification code has expired. Please request a new one.'
       });
     }
 
-    console.log('✅ Code is still valid');
+    logger.log('✅ Code is still valid');
 
     // Mark as verified
     const { error: updateError } = await supabase
@@ -347,7 +347,7 @@ app.post('/api/verify-email', async (req, res) => {
       .eq('id', verification.id);
 
     if (updateError) {
-      console.error('❌ Update error:', updateError);
+      logger.error('❌ Update error:', updateError);
       return res.status(500).json({
         error: 'Verification failed',
         message: 'Failed to verify email',
@@ -355,8 +355,8 @@ app.post('/api/verify-email', async (req, res) => {
       });
     }
 
-    console.log('✅ Email verified successfully');
-    console.log('🎉 === EMAIL VERIFICATION COMPLETE ===\n');
+    logger.log('✅ Email verified successfully');
+    logger.log('🎉 === EMAIL VERIFICATION COMPLETE ===\n');
 
     res.status(200).json({
       success: true,
@@ -364,7 +364,7 @@ app.post('/api/verify-email', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('💥 Unexpected error in verify-email:', error);
+    logger.error('💥 Unexpected error in verify-email:', error);
     res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to verify email',
@@ -384,13 +384,13 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`\n🚀 Email API server running on port ${PORT}`);
-  console.log(`📧 Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '❌ Missing'}`);
-  console.log(`🗄️  Supabase URL: ${process.env.SUPABASE_URL ? '✅ Configured' : '❌ Missing'}`);
-  console.log(`🔑 Service Role Key: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Configured' : '❌ Missing'}`);
-  console.log(`\n🧪 Test endpoints:`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
-  console.log(`   DB Test: http://localhost:${PORT}/api/test-db`);
-  console.log(`\n🎯 Ready to receive verification requests!\n`);
-  
+  logger.log(`\n🚀 Email API server running on port ${PORT}`);
+  logger.log(`📧 Resend API: ${process.env.RESEND_API_KEY ? '✅ Configured' : '❌ Missing'}`);
+  logger.log(`🗄️  Supabase URL: ${process.env.SUPABASE_URL ? '✅ Configured' : '❌ Missing'}`);
+  logger.log(`🔑 Service Role Key: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Configured' : '❌ Missing'}`);
+  logger.log(`\n🧪 Test endpoints:`);
+  logger.log(`   Health: http://localhost:${PORT}/health`);
+  logger.log(`   DB Test: http://localhost:${PORT}/api/test-db`);
+  logger.log(`\n🎯 Ready to receive verification requests!\n`);
+
 });

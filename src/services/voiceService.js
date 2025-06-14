@@ -1,6 +1,7 @@
 // src/services/voiceService.js
 import React from 'react';
 import AWS from 'aws-sdk';
+import logger from '../utils/logger';
 
 // Configure AWS - make sure to set these environment variables
 AWS.config.update({
@@ -31,7 +32,7 @@ export class VoiceService {
     try {
       if (this.isInitialized) return true;
 
-      console.log('🎤 Initializing voice service...');
+      logger.log('🎤 Initializing voice service...');
 
       // Check browser compatibility
       const compatibility = this.checkCompatibility();
@@ -51,15 +52,15 @@ export class VoiceService {
       if (process.env.REACT_APP_AWS_ACCESS_KEY_ID && process.env.REACT_APP_AWS_SECRET_ACCESS_KEY) {
         await this.testPollyConnection();
       } else {
-        console.log('🔍 AWS credentials not provided, skipping Polly test and using browser synthesis');
+        logger.log('🔍 AWS credentials not provided, skipping Polly test and using browser synthesis');
       }
 
       this.isInitialized = true;
-      console.log('✅ Voice service initialized successfully');
+      logger.log('✅ Voice service initialized successfully');
       return true;
 
     } catch (error) {
-      console.error('❌ Voice service initialization failed:', error);
+      logger.error('❌ Voice service initialization failed:', error);
       throw error;
     }
   }
@@ -67,13 +68,12 @@ export class VoiceService {
   // Test AWS Polly connection
   async testPollyConnection() {
     try {
-      // Skip AWS Polly test if credentials are not provided
       if (!process.env.REACT_APP_AWS_ACCESS_KEY_ID || !process.env.REACT_APP_AWS_SECRET_ACCESS_KEY) {
-        console.log('🔍 AWS credentials not provided, using browser synthesis');
+        logger.log('🔍 AWS credentials not provided, using browser synthesis');
         return false;
       }
 
-      console.log('🧪 Testing AWS Polly connection...');
+      logger.log('🧪 Testing AWS Polly connection...');
       
       const params = {
         Text: 'Test',
@@ -83,11 +83,11 @@ export class VoiceService {
       };
 
       await polly.synthesizeSpeech(params).promise();
-      console.log('✅ AWS Polly connection successful');
+      logger.log('✅ AWS Polly connection successful');
       return true;
 
     } catch (error) {
-      console.warn('⚠️ AWS Polly not available, falling back to browser synthesis:', error.message);
+      logger.warn('⚠️ AWS Polly not available, falling back to browser synthesis:', error.message);
       return false;
     }
   }
@@ -108,7 +108,7 @@ export class VoiceService {
     this.recognition.maxAlternatives = 1;
     // Note: Don't set grammars property - leave it as default
 
-    console.log('✅ Speech recognition initialized');
+    logger.log('✅ Speech recognition initialized');
     return this.recognition;
   }
 
@@ -120,7 +120,7 @@ export class VoiceService {
       }
 
       if (this.isListening) {
-        console.log('Already listening, stopping first...');
+        logger.log('Already listening, stopping first...');
         this.stopListening();
         await new Promise(resolve => setTimeout(resolve, 100)); // Brief delay
       }
@@ -141,7 +141,7 @@ export class VoiceService {
 
         // Configure recognition callbacks
         this.recognition.onstart = () => {
-          console.log('🎤 Speech recognition started');
+          logger.log('🎤 Speech recognition started');
           this.clearSilenceTimer();
         };
 
@@ -152,11 +152,11 @@ export class VoiceService {
           const transcript = result[0].transcript;
           const confidence = result[0].confidence;
 
-          console.log('📝 Speech recognized:', { transcript, confidence });
+          logger.log('📝 Speech recognized:', { transcript, confidence });
 
           // Log pronunciation issues for coaching
           if (confidence < 0.7) {
-            console.log('⚠️ Low confidence speech detected:', confidence);
+            logger.log('⚠️ Low confidence speech detected:', confidence);
           }
 
           resolve({
@@ -168,7 +168,7 @@ export class VoiceService {
         };
 
         this.recognition.onerror = (event) => {
-          console.error('❌ Speech recognition error:', event.error);
+          logger.error('❌ Speech recognition error:', event.error);
           this.isListening = false;
           this.clearSilenceTimer();
           
@@ -187,7 +187,7 @@ export class VoiceService {
         };
 
         this.recognition.onend = () => {
-          console.log('🔚 Speech recognition ended');
+          logger.log('🔚 Speech recognition ended');
           this.isListening = false;
           this.clearSilenceTimer();
         };
@@ -205,7 +205,7 @@ export class VoiceService {
     } catch (error) {
       this.isListening = false;
       this.clearSilenceTimer();
-      console.error('❌ Error starting speech recognition:', error);
+      logger.error('❌ Error starting speech recognition:', error);
       throw error;
     }
   }
@@ -216,7 +216,7 @@ export class VoiceService {
       try {
         this.recognition.stop();
       } catch (error) {
-        console.warn('⚠️ Error stopping recognition:', error);
+        logger.warn('⚠️ Error stopping recognition:', error);
       }
     }
     this.isListening = false;
@@ -236,11 +236,11 @@ export class VoiceService {
       
       // Stop the stream immediately - we just needed permission
       stream.getTracks().forEach(track => track.stop());
-      console.log('✅ Microphone permission granted');
+      logger.log('✅ Microphone permission granted');
       return true;
 
     } catch (error) {
-      console.error('❌ Microphone permission denied:', error);
+      logger.error('❌ Microphone permission denied:', error);
       throw new Error('Microphone access is required for voice training. Please allow microphone access and try again.');
     }
   }
@@ -248,18 +248,18 @@ export class VoiceService {
   // Synthesize speech using AWS Polly with fallback
   async synthesizeSpeech(text, options = {}) {
     try {
-      console.log('🗣️ Synthesizing speech:', text.substring(0, 50) + '...');
+      logger.log('🗣️ Synthesizing speech:', text.substring(0, 50) + '...');
 
       // Try AWS Polly first
       try {
         return await this.synthesizeWithPolly(text, options);
       } catch (pollyError) {
-        console.warn('⚠️ Polly synthesis failed, falling back to browser:', pollyError.message);
+        logger.warn('⚠️ Polly synthesis failed, falling back to browser:', pollyError.message);
         return await this.synthesizeWithBrowser(text, options);
       }
 
     } catch (error) {
-      console.error('❌ All speech synthesis methods failed:', error);
+      logger.error('❌ All speech synthesis methods failed:', error);
       throw new Error('Speech synthesis failed. Please check your internet connection.');
     }
   }
@@ -334,12 +334,12 @@ export class VoiceService {
       }
 
       utterance.onstart = () => {
-        console.log('🗣️ Browser synthesis started');
+        logger.log('🗣️ Browser synthesis started');
         this.isSpeaking = true;
       };
 
       utterance.onend = () => {
-        console.log('✅ Browser synthesis completed');
+        logger.log('✅ Browser synthesis completed');
         this.isSpeaking = false;
         resolve({
           success: true,
@@ -351,13 +351,13 @@ export class VoiceService {
       };
 
       utterance.onerror = (event) => {
-        console.error('❌ Browser synthesis error:', event.error);
+        logger.error('❌ Browser synthesis error:', event.error);
         this.isSpeaking = false;
         reject(new Error(`Browser speech synthesis error: ${event.error}`));
       };
 
       // Start speaking
-      console.log('🗣️ Starting browser synthesis for:', text);
+      logger.log('🗣️ Starting browser synthesis for:', text);
       this.synthesis.speak(utterance);
     });
   }
@@ -380,7 +380,7 @@ export class VoiceService {
         this.currentAudio.volume = options.volume || 1.0;
 
         this.currentAudio.onloadeddata = () => {
-          console.log('🔊 Audio loaded, duration:', this.currentAudio.duration);
+          logger.log('🔊 Audio loaded, duration:', this.currentAudio.duration);
         };
 
         this.currentAudio.onplay = () => {
@@ -388,14 +388,14 @@ export class VoiceService {
         };
 
         this.currentAudio.onended = () => {
-          console.log('✅ Audio playback completed');
+          logger.log('✅ Audio playback completed');
           this.isSpeaking = false;
           this.currentAudio = null;
           resolve({ success: true, playbackType: 'audio' });
         };
 
         this.currentAudio.onerror = (event) => {
-          console.error('❌ Audio playback error:', event);
+          logger.error('❌ Audio playback error:', event);
           this.isSpeaking = false;
           this.currentAudio = null;
           reject(new Error('Audio playback failed'));
@@ -403,14 +403,14 @@ export class VoiceService {
 
         // Start playback
         this.currentAudio.play().catch(error => {
-          console.error('❌ Play promise rejected:', error);
+          logger.error('❌ Play promise rejected:', error);
           this.isSpeaking = false;
           reject(error);
         });
       });
 
     } catch (error) {
-      console.error('❌ Play audio error:', error);
+      logger.error('❌ Play audio error:', error);
       throw error;
     }
   }
@@ -435,11 +435,11 @@ export class VoiceService {
   async speakText(text, options = {}) {
     try {
       if (!text || text.trim().length === 0) {
-        console.warn('⚠️ Empty text provided to speakText');
+        logger.warn('⚠️ Empty text provided to speakText');
         return { success: false, error: 'Empty text' };
       }
 
-      console.log('🗣️ Speaking text:', text);
+      logger.log('🗣️ Speaking text:', text);
       
       const synthResult = await this.synthesizeSpeech(text, options);
       
@@ -457,7 +457,7 @@ export class VoiceService {
           try {
             URL.revokeObjectURL(synthResult.audioUrl);
           } catch (error) {
-            console.warn('⚠️ Failed to revoke blob URL:', error);
+            logger.warn('⚠️ Failed to revoke blob URL:', error);
           }
         }, 60000); // Clean up after 1 minute
       }
@@ -465,7 +465,7 @@ export class VoiceService {
       return synthResult;
 
     } catch (error) {
-      console.error('❌ Speak text error:', error);
+      logger.error('❌ Speak text error:', error);
       throw error;
     }
   }
@@ -481,13 +481,13 @@ export class VoiceService {
       
       if (silenceSeconds === 10) {
         // First warning at 10 seconds
-        console.log('⚠️ 10 second silence warning');
+        logger.log('⚠️ 10 second silence warning');
         if (this.onSilenceCallback) {
           this.onSilenceCallback(silenceSeconds);
         }
       } else if (silenceSeconds >= 15) {
         // Hang up at 15 seconds total
-        console.log('⏰ 15 second silence timeout - hanging up');
+        logger.log('⏰ 15 second silence timeout - hanging up');
         this.clearSilenceTimer();
         if (this.onHangupCallback) {
           this.onHangupCallback('silence_timeout');
@@ -555,7 +555,7 @@ export class VoiceService {
 
   // Clean up resources
   cleanup() {
-    console.log('🧹 Cleaning up voice service...');
+    logger.log('🧹 Cleaning up voice service...');
     
     this.stopListening();
     this.stopCurrentAudio();
@@ -585,12 +585,12 @@ export class VoiceService {
   // Test speech synthesis (for debugging)
   async testSpeech(text = "Hello, this is a test of the speech synthesis system.") {
     try {
-      console.log('🧪 Testing speech synthesis...');
+      logger.log('🧪 Testing speech synthesis...');
       const result = await this.speakText(text);
-      console.log('✅ Speech test successful:', result);
+      logger.log('✅ Speech test successful:', result);
       return result;
     } catch (error) {
-      console.error('❌ Speech test failed:', error);
+      logger.error('❌ Speech test failed:', error);
       throw error;
     }
   }
@@ -613,7 +613,7 @@ export const useVoice = () => {
         await voiceService.initialize();
         setIsInitialized(true);
       } catch (error) {
-        console.error('Voice service initialization failed:', error);
+        logger.error('Voice service initialization failed:', error);
         setError(error.message);
       }
     };

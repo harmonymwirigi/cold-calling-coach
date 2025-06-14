@@ -1,11 +1,12 @@
 // src/components/roleplay/FunctionalPhoneInterface.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle } from 'lucide-react';
+import {PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRoleplay } from '../../contexts/RoleplayContext';
 import { useProgress } from '../../contexts/ProgressContext';
 import { useVoice } from '../../services/voiceService';
+import logger from '../../utils/logger';
 
 const FunctionalPhoneInterface = () => {
   const { type, mode } = useParams(); // e.g., /roleplay/opener_practice/practice
@@ -72,7 +73,7 @@ const FunctionalPhoneInterface = () => {
         setIsInitializing(true);
         setError('');
 
-        console.log('🚀 Initializing roleplay:', { type, mode });
+        logger.log('🚀 Initializing roleplay:', { type, mode });
 
         // Check if user has access to this roleplay
         const access = getRoleplayAccess(type);
@@ -82,7 +83,7 @@ const FunctionalPhoneInterface = () => {
 
         // Wait for voice service to be ready
         if (!isInitialized) {
-          console.log('⏳ Waiting for voice service initialization...');
+          logger.log('⏳ Waiting for voice service initialization...');
           await new Promise(resolve => {
             const checkInit = () => {
               if (voiceService.isInitialized) {
@@ -100,10 +101,10 @@ const FunctionalPhoneInterface = () => {
           character: currentCharacter
         });
 
-        console.log('✅ Roleplay initialized successfully');
+        logger.log('✅ Roleplay initialized successfully');
 
       } catch (error) {
-        console.error('❌ Error initializing roleplay:', error);
+        logger.error('❌ Error initializing roleplay:', error);
         setError(error.message || 'Failed to start roleplay. Please try again.');
       } finally {
         setIsInitializing(false);
@@ -166,7 +167,7 @@ const FunctionalPhoneInterface = () => {
   };
 
   const handleCallEnded = () => {
-    console.log('📞 Call ended, stopping all audio/voice');
+    logger.log('📞 Call ended, stopping all audio/voice');
     stopListening();
     stopSpeaking();
     clearTimers();
@@ -174,7 +175,7 @@ const FunctionalPhoneInterface = () => {
 
   const handleStartListening = async () => {
     if (isListening || isSpeaking || isProcessing) {
-      console.log('⚠️ Cannot start listening - already active');
+      logger.log('⚠️ Cannot start listening - already active');
       return;
     }
 
@@ -183,35 +184,35 @@ const FunctionalPhoneInterface = () => {
       setSilenceWarning(false);
       setUserSpeechText('');
       
-      console.log('🎤 Starting to listen...');
+      logger.log('🎤 Starting to listen...');
       
       const result = await startListening({
         skipPermissionCheck: false
       });
 
       if (result?.transcript) {
-        console.log('📝 User said:', result.transcript);
+        logger.log('📝 User said:', result.transcript);
         setUserSpeechText(result.transcript);
         await processUserInput(result.transcript, result.confidence);
       }
     } catch (error) {
-      console.error('❌ Voice recognition error:', error);
+      logger.error('❌ Voice recognition error:', error);
       setError(error.message);
     }
   };
 
   const processUserInput = async (transcript, confidence) => {
     if (!currentSession || callState !== 'connected') {
-      console.warn('⚠️ Cannot process input - session not ready');
+      logger.warn('⚠️ Cannot process input - session not ready');
       return;
     }
 
     try {
-      console.log('🔄 Processing user input:', transcript);
+      logger.log('🔄 Processing user input:', transcript);
 
       // Log pronunciation issues for low confidence
       if (confidence < 0.7) {
-        console.log('📊 Low confidence speech detected:', confidence);
+        logger.log('📊 Low confidence speech detected:', confidence);
       }
 
       // Process with AI and get response
@@ -223,7 +224,7 @@ const FunctionalPhoneInterface = () => {
 
         // Speak the AI response if not muted
         if (!isMuted && aiResult.response) {
-          console.log('🗣️ AI speaking:', aiResult.response);
+          logger.log('🗣️ AI speaking:', aiResult.response);
           await speakText(aiResult.response, {
             voiceId: 'Joanna',
             rate: 0.9
@@ -232,24 +233,24 @@ const FunctionalPhoneInterface = () => {
 
         // Check if call should end
         if (aiResult.nextStage === 'hang_up' || aiResult.shouldHangUp) {
-          console.log('📞 Call ending due to stage:', aiResult.nextStage);
+          logger.log('📞 Call ending due to stage:', aiResult.nextStage);
           setTimeout(() => {
             handleCallEnd(aiResult.evaluation?.passed ? 'completed' : 'failed');
           }, 2000);
         }
       } else {
-        console.error('❌ AI processing failed:', aiResult?.error);
+        logger.error('❌ AI processing failed:', aiResult?.error);
         setError('Failed to process your response. Please try again.');
       }
     } catch (error) {
-      console.error('❌ Error processing user input:', error);
+      logger.error('❌ Error processing user input:', error);
       setError('Failed to process your response. Please try again.');
     }
   };
 
   const handleCallEnd = async (reason = 'user_ended') => {
     try {
-      console.log('🏁 Ending call:', reason);
+      logger.log('🏁 Ending call:', reason);
       
       const sessionResult = await endSession(reason);
       
@@ -258,7 +259,7 @@ const FunctionalPhoneInterface = () => {
         await updateProgressData(sessionResult);
       }
     } catch (error) {
-      console.error('❌ Error ending call:', error);
+      logger.error('❌ Error ending call:', error);
       setError('Error ending call');
     }
   };
@@ -290,7 +291,7 @@ const FunctionalPhoneInterface = () => {
 
       await updateProgress(type, progressUpdate);
     } catch (error) {
-      console.error('❌ Error updating progress:', error);
+      logger.error('❌ Error updating progress:', error);
     }
   };
 

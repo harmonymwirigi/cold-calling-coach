@@ -5,6 +5,7 @@ import FunctionalPhoneInterface from '../components/roleplay/FunctionalPhoneInte
 import { useAuth } from '../contexts/AuthContext';
 import { useProgress } from '../contexts/ProgressContext';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
+import logger from '../utils/logger';
 
 const Roleplay = () => {
   const { type, mode } = useParams();
@@ -44,7 +45,7 @@ const Roleplay = () => {
 
   // Redirect if invalid parameters
   if (!isValidRoleplay || !isValidMode) {
-    console.error('Invalid roleplay parameters:', { type, mode });
+    logger.error('Invalid roleplay parameters:', { type, mode });
     return <Navigate to="/dashboard" replace />;
   }
 

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Lock, Play, Star, Trophy, Clock, CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useProgress } from '../contexts/ProgressContext';
+import PropTypes from 'prop-types';
 
 const RoleplayCard = ({ 
   roleplayType,
@@ -142,9 +143,15 @@ const RoleplayCard = ({
   );
 };
 
-export default function Dashboard() {
+const Dashboard = () => {
   const { userProfile } = useAuth();
-  const { progress, loading, error, getRoleplayAccess, getOverallStats, getRecentActivity } = useProgress();
+  const { 
+    loading, 
+    error,
+    getOverallStats,
+    getRecentActivity,
+    getRoleplayAccess 
+  } = useProgress();
   const navigate = useNavigate();
 
   const [stats, setStats] = useState({
@@ -156,13 +163,6 @@ export default function Dashboard() {
   });
 
   const [recentActivity, setRecentActivity] = useState([]);
-
-  useEffect(() => {
-    if (!loading) {
-      setStats(getOverallStats());
-      setRecentActivity(getRecentActivity());
-    }
-  }, [loading, progress]);
 
   const roleplays = [
     {
@@ -195,6 +195,13 @@ export default function Dashboard() {
   const handleStartRoleplay = (roleplayType, mode) => {
     navigate(`/roleplay/${roleplayType}/${mode}`);
   };
+
+  useEffect(() => {
+    if (!loading) {
+      setStats(getOverallStats());
+      setRecentActivity(getRecentActivity());
+    }
+  }, [loading, getOverallStats, getRecentActivity]);
 
   if (loading) {
     return (
@@ -359,4 +366,22 @@ export default function Dashboard() {
       </div>
     </div>
   );
-}
+};
+
+Dashboard.propTypes = {
+  roleplayType: PropTypes.string.isRequired,
+  title: PropTypes.string.isRequired,
+  description: PropTypes.string.isRequired,
+  access: PropTypes.shape({
+    unlocked: PropTypes.bool.isRequired,
+    unlockExpiry: PropTypes.string,
+    marathonPasses: PropTypes.number.isRequired,
+    legendCompleted: PropTypes.bool.isRequired
+  }).isRequired,
+  onStartPractice: PropTypes.func.isRequired,
+  onStartMarathon: PropTypes.func.isRequired,
+  onStartLegend: PropTypes.func.isRequired,
+  isFirst: PropTypes.bool.isRequired
+};
+
+export default Dashboard;

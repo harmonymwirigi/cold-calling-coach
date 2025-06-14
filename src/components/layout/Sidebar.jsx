@@ -4,11 +4,8 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Home, 
-  Phone, 
   User, 
-  Trophy, 
   BarChart3, 
-  Settings, 
   Shield,
   Clock,
   Target,

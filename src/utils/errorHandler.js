@@ -31,7 +31,7 @@ class AppError extends Error {
   export const errorHandler = {
     // Handle API errors
     handleApiError(error) {
-      console.error('API Error:', error);
+      logger.error('API Error:', error);
       
       // Log to external service (Sentry, LogRocket, etc.)
       this.logError(error);
@@ -42,7 +42,7 @@ class AppError extends Error {
   
     // Handle voice recognition errors
     handleVoiceError(error) {
-      console.error('Voice Error:', error);
+      logger.error('Voice Error:', error);
       
       const voiceErrors = {
         'not-allowed': 'Microphone access denied. Please allow microphone access and try again.',
@@ -58,7 +58,7 @@ class AppError extends Error {
   
     // Handle AI service errors
     handleAiError(error) {
-      console.error('AI Error:', error);
+      logger.error('AI Error:', error);
       
       if (error.code === 'rate_limit_exceeded') {
         return 'Too many requests. Please wait a moment and try again.';
@@ -103,7 +103,7 @@ class AppError extends Error {
       };
   
       // Send to logging service
-      console.error('Error logged:', errorLog);
+      logger.error('Error logged:', errorLog);
       
       // In production:
       // Sentry.captureException(error);

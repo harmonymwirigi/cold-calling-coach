@@ -64,7 +64,7 @@ export const performanceMonitor = {
     // Send metrics to analytics service
     sendMetrics(type, data) {
       // In production, send to your analytics service
-      console.log(`Performance metric [${type}]:`, data);
+      logger.log(`Performance metric [${type}]:`, data);
       
       // Example: Send to Google Analytics 4
       // gtag('event', type, data);

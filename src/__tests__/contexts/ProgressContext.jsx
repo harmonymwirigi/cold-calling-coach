@@ -46,7 +46,7 @@ export const ProgressProvider = ({ children }) => {
       
       setProgress(progressObj);
     } catch (error) {
-      console.error('Error fetching progress:', error);
+      logger.error('Error fetching progress:', error);
     } finally {
       setLoading(false);
     }
@@ -66,7 +66,7 @@ export const ProgressProvider = ({ children }) => {
       if (error) throw error;
       setSessions(data);
     } catch (error) {
-      console.error('Error fetching sessions:', error);
+      logger.error('Error fetching sessions:', error);
     }
   };
 
@@ -88,7 +88,7 @@ export const ProgressProvider = ({ children }) => {
       await fetchProgress();
       return { success: true };
     } catch (error) {
-      console.error('Error updating progress:', error);
+      logger.error('Error updating progress:', error);
       return { success: false, error: error.message };
     }
   };
@@ -109,7 +109,7 @@ export const ProgressProvider = ({ children }) => {
       await fetchSessions();
       return { success: true };
     } catch (error) {
-      console.error('Error logging session:', error);
+      logger.error('Error logging session:', error);
       return { success: false, error: error.message };
     }
   };

@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import logger from '../utils/logger';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -24,18 +25,18 @@ const Login = () => {
       setError('');
       setLoading(true);
       
-      console.log('Attempting to sign in:', email);
+      logger.log('Attempting to sign in:', email);
       const result = await signIn(email, password);
       
       if (result.success) {
-        console.log('Login successful, redirecting to dashboard');
+        logger.log('Login successful, redirecting to dashboard');
         navigate('/dashboard');
       } else {
-        console.error('Login failed:', result.error);
+        logger.error('Login failed:', result.error);
         setError(result.error || 'Failed to sign in');
       }
     } catch (err) {
-      console.error('Login error:', err);
+      logger.error('Login error:', err);
       setError('An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);

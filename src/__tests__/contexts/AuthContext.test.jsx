@@ -50,7 +50,7 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (error) {
       setError(error.message);
-      console.error('Error getting session:', error);
+      logger.error('Error getting session:', error);
     } finally {
       setLoading(false);
     }
@@ -67,7 +67,7 @@ export const AuthProvider = ({ children }) => {
       if (error) throw error;
       setUserProfile(data);
     } catch (error) {
-      console.error('Error fetching user profile:', error);
+      logger.error('Error fetching user profile:', error);
       setError('Failed to load user profile');
     }
   };
@@ -139,7 +139,7 @@ export const AuthProvider = ({ children }) => {
       setUserProfile(null);
     } catch (error) {
       setError(error.message);
-      console.error('Error signing out:', error);
+      logger.error('Error signing out:', error);
     }
   };
 

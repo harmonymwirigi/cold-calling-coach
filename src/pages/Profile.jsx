@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useProgress } from '../contexts/ProgressContext';
-import { User, Settings, Target, Clock, Award, Download, Trash2, Save, Edit3 } from 'lucide-react';
+import { User, Settings, Target, Clock, Award, Download, Save } from 'lucide-react';
 
 const Profile = () => {
   const { userProfile, updateProfile, user } = useAuth();

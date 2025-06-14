@@ -1,7 +1,7 @@
 // src/contexts/AuthContext.jsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { authService, userService } from '../services/supabase';
-
+import logger from '../utils/logger';
 const AuthContext = createContext();
 
 export const useAuth = () => {
@@ -37,7 +37,7 @@ export const AuthProvider = ({ children }) => {
         }
       }
     } catch (error) {
-      console.error('Error initializing auth:', error);
+      logger.error('Error initializing auth:', error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -48,20 +48,20 @@ export const AuthProvider = ({ children }) => {
   const sendVerificationCode = async (email, firstName) => {
     try {
       setError(null);
-      console.log('AuthContext: Sending verification code for:', email);
+      logger.log('AuthContext: Sending verification code for:', email);
       
       const result = await authService.sendVerificationCode(email, firstName);
       
       if (result.success) {
-        console.log('AuthContext: Verification code sent successfully');
+        logger.log('AuthContext: Verification code sent successfully');
         return { success: true, message: result.message };
       } else {
-        console.error('AuthContext: Failed to send verification code:', result.error);
+        logger.error('AuthContext: Failed to send verification code:', result.error);
         setError(result.error);
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('AuthContext: Send verification error:', error);
+      logger.error('AuthContext: Send verification error:', error);
       const errorMessage = error.message || 'Failed to send verification code';
       setError(errorMessage);
       return { success: false, error: errorMessage };
@@ -72,20 +72,20 @@ export const AuthProvider = ({ children }) => {
   const verifyEmailCode = async (email, code) => {
     try {
       setError(null);
-      console.log('AuthContext: Verifying email code for:', email);
+      logger.log('AuthContext: Verifying email code for:', email);
       
       const result = await authService.verifyEmailCode(email, code);
       
       if (result.success) {
-        console.log('AuthContext: Email verification successful');
+        logger.log('AuthContext: Email verification successful');
         return { success: true, message: result.message };
       } else {
-        console.error('AuthContext: Email verification failed:', result.error);
+        logger.error('AuthContext: Email verification failed:', result.error);
         setError(result.error);
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('AuthContext: Verify email error:', error);
+      logger.error('AuthContext: Verify email error:', error);
       const errorMessage = error.message || 'Failed to verify email code';
       setError(errorMessage);
       return { success: false, error: errorMessage };
@@ -97,12 +97,12 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       setLoading(true);
-      console.log('AuthContext: Creating user account for:', email);
+      logger.log('AuthContext: Creating user account for:', email);
       
       const result = await authService.signUp(email, firstName, password, profileData);
       
       if (result.success) {
-        console.log('AuthContext: User account created successfully');
+        logger.log('AuthContext: User account created successfully');
         setUser(result.user);
         
         // Load user profile
@@ -113,12 +113,12 @@ export const AuthProvider = ({ children }) => {
         
         return { success: true, user: result.user };
       } else {
-        console.error('AuthContext: User signup failed:', result.error);
+        logger.error('AuthContext: User signup failed:', result.error);
         setError(result.error);
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('AuthContext: Signup error:', error);
+      logger.error('AuthContext: Signup error:', error);
       const errorMessage = error.message || 'Failed to create account';
       setError(errorMessage);
       return { success: false, error: errorMessage };
@@ -150,7 +150,7 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('AuthContext: Sign in error:', error);
+      logger.error('AuthContext: Sign in error:', error);
       const errorMessage = error.message || 'Failed to sign in';
       setError(errorMessage);
       return { success: false, error: errorMessage };
@@ -174,7 +174,7 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('AuthContext: Sign out error:', error);
+      logger.error('AuthContext: Sign out error:', error);
       const errorMessage = error.message || 'Failed to sign out';
       setError(errorMessage);
       return { success: false, error: errorMessage };
@@ -200,7 +200,7 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('AuthContext: Update profile error:', error);
+      logger.error('AuthContext: Update profile error:', error);
       const errorMessage = error.message || 'Failed to update profile';
       setError(errorMessage);
       return { success: false, error: errorMessage };
@@ -222,7 +222,7 @@ export const AuthProvider = ({ children }) => {
       const result = await userService.getUserProgress(user.id);
       return result;
     } catch (error) {
-      console.error('AuthContext: Get user progress error:', error);
+      logger.error('AuthContext: Get user progress error:', error);
       return { success: false, error: error.message };
     }
   };

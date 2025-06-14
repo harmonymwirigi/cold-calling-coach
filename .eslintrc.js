@@ -1,10 +1,8 @@
-
 // .eslintrc.js
 module.exports = {
     env: {
       browser: true,
       es2021: true,
-      jest: true,
       node: true
     },
     extends: [
@@ -16,15 +14,15 @@ module.exports = {
       ecmaFeatures: {
         jsx: true
       },
-      ecmaVersion: 'latest',
+      ecmaVersion: 12,
       sourceType: 'module'
     },
     plugins: ['react', 'react-hooks'],
     rules: {
+      'no-console': process.env.NODE_ENV === 'production' ? 'error' : 'warn',
       'react/react-in-jsx-scope': 'off',
-      'react/prop-types': 'warn',
+      'react/prop-types': 'off',
       'no-unused-vars': 'warn',
-      'no-console': 'warn',
       'react-hooks/exhaustive-deps': 'warn'
     },
     settings: {

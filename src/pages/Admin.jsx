@@ -1,16 +1,15 @@
 // src/pages/Admin.jsx
-import React, { useState, useEffect } from 'react';
-import { Users, Settings, BarChart3, Clock, Shield, Search, Filter, Download, Edit, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Users, Settings, BarChart3, Clock, Shield, Search, Download, Edit, Trash2 } from 'lucide-react';
 
 // Admin Dashboard Component
 const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState({});
-  const [loading, setLoading] = useState(false);
 
   // Mock data - replace with actual API calls
-  const mockStats = {
+  const mockStats = useMemo(() => ({
     totalUsers: 1247,
     activeUsers: 892,
     trialUsers: 654,
@@ -18,9 +17,9 @@ const AdminDashboard = () => {
     dailyUsage: 45.2,
     monthlyUsage: 1238,
     conversionRate: 15.5
-  };
+  }), []);
 
-  const mockUsers = [
+  const mockUsers = useMemo(() => [
     {
       id: '1',
       firstName: 'John',
@@ -60,12 +59,12 @@ const AdminDashboard = () => {
       sessionsCompleted: 8,
       averageScore: 2.9
     }
-  ];
+  ], []);
 
   useEffect(() => {
     setStats(mockStats);
     setUsers(mockUsers);
-  }, []);
+  }, [mockStats, mockUsers]);
 
   return (
     <div className="min-h-screen bg-gray-50">

@@ -27,7 +27,7 @@ export const offlineManager = {
           await this.syncItem(item);
           this.removePendingItem(item.id);
         } catch (error) {
-          console.error('Failed to sync item:', error);
+          logger.error('Failed to sync item:', error);
         }
       }
     },
@@ -53,12 +53,12 @@ export const offlineManager = {
   
     async syncItem(item) {
       // Implement actual sync logic based on item type
-      console.log('Syncing item:', item);
+      logger.log('Syncing item:', item);
     },
   
     showNotification(message, type) {
       // Show in-app notification
-      console.log(`[${type.toUpperCase()}] ${message}`);
+      logger.log(`[${type.toUpperCase()}] ${message}`);
     }
   };
   

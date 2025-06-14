@@ -42,7 +42,7 @@ export default async function handler(req, res) {
       .limit(1);
 
     if (error) {
-      console.error('Database query error:', error);
+      logger.error('Database query error:', error);
       return res.status(500).json({
         error: 'Database error',
         message: 'Failed to verify code'
@@ -76,7 +76,7 @@ export default async function handler(req, res) {
       .eq('id', verification.id);
 
     if (updateError) {
-      console.error('Update error:', updateError);
+      logger.error('Update error:', updateError);
       return res.status(500).json({
         error: 'Verification failed',
         message: 'Failed to verify email'
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Unexpected error:', error);
+    logger.error('Unexpected error:', error);
     res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to verify email'

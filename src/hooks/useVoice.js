@@ -50,7 +50,7 @@ export const useVoice = () => {
         await voiceService.playAudio(result.audioUrl);
       }
     } catch (error) {
-      console.error('Speech error:', error);
+      logger.error('Speech error:', error);
     } finally {
       setIsSpeaking(false);
     }

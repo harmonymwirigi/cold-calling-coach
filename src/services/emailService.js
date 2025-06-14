@@ -1,4 +1,5 @@
 // src/services/emailService.js
+import logger from '../utils/logger';
 
 const API_URL = process.env.NODE_ENV === 'production' 
   ? '' // Use relative URLs in production (same domain)
@@ -8,7 +9,7 @@ export const emailService = {
   // Send verification code email - FIXED VERSION
   async sendVerificationEmail(email, firstName) {
     try {
-      console.log('Sending verification email to:', email);
+      logger.log('Sending verification email to:', email);
       
       const response = await fetch(`${API_URL}/api/send-verification`, {
         method: 'POST',
@@ -25,14 +26,14 @@ export const emailService = {
       const data = await response.json();
 
       if (!response.ok) {
-        console.error('Server response error:', data);
+        logger.error('Server response error:', data);
         throw new Error(data.message || data.error || 'Failed to send verification email');
       }
 
-      console.log('Verification email sent successfully:', data);
+      logger.log('Verification email sent successfully:', data);
       return { success: true, data };
     } catch (error) {
-      console.error('Error sending verification email:', error);
+      logger.error('Error sending verification email:', error);
       return { 
         success: false, 
         error: error.message || 'Network error occurred'
@@ -43,7 +44,7 @@ export const emailService = {
   // Verify email code - NEW METHOD
   async verifyEmailCode(email, code) {
     try {
-      console.log('Verifying email code for:', email);
+      logger.log('Verifying email code for:', email);
       
       const response = await fetch(`${API_URL}/api/verify-email`, {
         method: 'POST',
@@ -59,14 +60,14 @@ export const emailService = {
       const data = await response.json();
 
       if (!response.ok) {
-        console.error('Verification error:', data);
+        logger.error('Verification error:', data);
         throw new Error(data.message || data.error || 'Failed to verify code');
       }
 
-      console.log('Email verified successfully:', data);
+      logger.log('Email verified successfully:', data);
       return { success: true, data };
     } catch (error) {
-      console.error('Error verifying email code:', error);
+      logger.error('Error verifying email code:', error);
       return { 
         success: false, 
         error: error.message || 'Network error occurred'
@@ -84,10 +85,10 @@ export const emailService = {
         throw new Error('Server health check failed');
       }
 
-      console.log('Server connection test successful:', data);
+      logger.log('Server connection test successful:', data);
       return { success: true, data };
     } catch (error) {
-      console.error('Server connection test failed:', error);
+      logger.error('Server connection test failed:', error);
       return { 
         success: false, 
         error: error.message || 'Cannot connect to server'
@@ -119,7 +120,7 @@ export const emailService = {
       const data = await response.json();
       return { success: true, data };
     } catch (error) {
-      console.error('Error sending welcome email:', error);
+      logger.error('Error sending welcome email:', error);
       return { success: false, error: error.message };
     }
   },
@@ -148,7 +149,7 @@ export const emailService = {
       const data = await response.json();
       return { success: true, data };
     } catch (error) {
-      console.error('Failed to send progress report:', error);
+      logger.error('Failed to send progress report:', error);
       return { success: false, error: error.message };
     }
   },
@@ -177,7 +178,7 @@ export const emailService = {
       const data = await response.json();
       return { success: true, data };
     } catch (error) {
-      console.error('Failed to send achievement email:', error);
+      logger.error('Failed to send achievement email:', error);
       return { success: false, error: error.message };
     }
   },
@@ -206,7 +207,7 @@ export const emailService = {
       const data = await response.json();
       return { success: true, data };
     } catch (error) {
-      console.error('Failed to send practice reminder:', error);
+      logger.error('Failed to send practice reminder:', error);
       return { success: false, error: error.message };
     }
   },
@@ -235,7 +236,7 @@ export const emailService = {
       const data = await response.json();
       return { success: true, data };
     } catch (error) {
-      console.error('Failed to send upgrade notification:', error);
+      logger.error('Failed to send upgrade notification:', error);
       return { success: false, error: error.message };
     }
   }

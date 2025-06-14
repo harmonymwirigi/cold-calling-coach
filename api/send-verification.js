@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       .single();
 
     if (verificationError) {
-      console.error('Database error:', verificationError);
+      logger.error('Database error:', verificationError);
       return res.status(500).json({ 
         error: 'Database error',
         message: 'Failed to store verification code'
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
     });
 
     if (emailError) {
-      console.error('Email error:', emailError);
+      logger.error('Email error:', emailError);
       // Clean up verification record
       await supabase
         .from('email_verifications')
@@ -108,7 +108,7 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Unexpected error:', error);
+    logger.error('Unexpected error:', error);
     res.status(500).json({ 
       error: 'Internal server error',
       message: 'Failed to send verification email'

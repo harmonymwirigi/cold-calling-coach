@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { Bell, Settings, User, LogOut, Menu, X } from 'lucide-react';
-
+import logger from '../../utils/logger'
 const Header = () => {
   const { user, userProfile, signOut } = useAuth();
   const navigate = useNavigate();
@@ -15,7 +15,7 @@ const Header = () => {
       await signOut();
       navigate('/login');
     } catch (error) {
-      console.error('Error signing out:', error);
+      logger.error('Error signing out:', error);
     }
   };
 

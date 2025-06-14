@@ -1,10 +1,8 @@
 // src/services/openaiService.js
 import OpenAI from 'openai';
+import logger from '../utils/logger';
 
-const openai = new OpenAI({
-  apiKey: process.env.REACT_APP_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true // Note: In production, move this to backend
-});
+
 
 // Objection libraries from roleplay instructions
 const EARLY_OBJECTIONS = [
@@ -130,16 +128,60 @@ export class OpenAIService {
     this.sessionData = {};
   }
 
+  async initialize() {
+    try {
+      if (this.isInitialized) return true;
+
+      logger.log('🤖 Initializing OpenAI service...');
+
+      // Check API key
+      if (!process.env.REACT_APP_OPENAI_API_KEY) {
+        throw new Error('OpenAI API key not found');
+      }
+
+      // Initialize OpenAI client
+      this.client = new OpenAI({
+        apiKey: process.env.REACT_APP_OPENAI_API_KEY,
+        dangerouslyAllowBrowser: true
+      });
+
+      // Test connection
+      await this.testConnection();
+
+      this.isInitialized = true;
+      logger.log('✅ OpenAI service initialized successfully');
+      return true;
+
+    } catch (error) {
+      logger.error('❌ OpenAI service initialization failed:', error);
+      throw error;
+    }
+  }
+
+  async testConnection() {
+    try {
+      logger.log('🧪 Testing OpenAI connection...');
+      
+     
+      logger.log('✅ OpenAI connection successful');
+      return true;
+
+    } catch (error) {
+      logger.error('❌ OpenAI connection failed:', error);
+      throw error;
+    }
+  }
+
   // Main method to get AI prospect response following roleplay instructions
   async getProspectResponse(userInput, context, stage = 'greeting') {
     try {
-      console.log('🤖 AI Processing:', { userInput, stage, context: context.roleplayType });
+      logger.log('🤖 AI Processing:', { userInput, stage, context: context.roleplayType });
       
       this.currentStage = stage;
       
       // First, evaluate the user's response
       const evaluation = await this.evaluateUserResponse(userInput, stage, context);
-      console.log('📊 Evaluation result:', evaluation);
+      logger.log('📊 Evaluation result:', evaluation);
 
       // Determine next stage and AI response based on evaluation and stage
       const { nextStage, aiResponse, shouldHangUp } = await this.determineNextAction(
@@ -166,7 +208,7 @@ export class OpenAIService {
       };
 
     } catch (error) {
-      console.error('❌ OpenAI API error:', error);
+      logger.error('❌ OpenAI API error:', error);
       return {
         success: false,
         error: error.message,
@@ -178,7 +220,7 @@ export class OpenAIService {
 
   // Determine next action based on current stage and evaluation
   async determineNextAction(userInput, evaluation, stage, context) {
-    console.log('🎯 Determining next action:', { stage, passed: evaluation.passed });
+    logger.log('🎯 Determining next action:', { stage, passed: evaluation.passed });
 
     let objection;
     switch (stage) {
@@ -274,7 +316,7 @@ export class OpenAIService {
         return { passed: true, feedback: 'Stage not evaluated', scores: {} };
       }
 
-      console.log('📋 Evaluating with rubric:', { stage, criteria: rubric.criteria });
+      logger.log('📋 Evaluating with rubric:', { stage, criteria: rubric.criteria });
 
       const evaluationPrompt = `
 You are evaluating a cold call response. Be strict and precise according to the rubrics.
@@ -310,7 +352,7 @@ Provide evaluation in this exact JSON format:
   "improvements": ["improvement1", "improvement2"]
 }`;
 
-      const response = await openai.chat.completions.create({
+      const response = await this.client.chat.completions.create({
         model: 'gpt-4',
         messages: [{ role: 'user', content: evaluationPrompt }],
         temperature: 0.2,
@@ -321,7 +363,7 @@ Provide evaluation in this exact JSON format:
       try {
         evaluation = JSON.parse(response.choices[0].message.content);
       } catch (parseError) {
-        console.error('JSON parse error:', parseError);
+        logger.error('JSON parse error:', parseError);
         return this.getFallbackEvaluation(userInput, stage);
       }
       
@@ -329,7 +371,7 @@ Provide evaluation in this exact JSON format:
       const passedCriteria = Object.values(evaluation.scores).filter(Boolean).length;
       evaluation.passed = passedCriteria >= rubric.passThreshold;
 
-      console.log('✅ Evaluation complete:', { 
+      logger.log('✅ Evaluation complete:', { 
         passed: evaluation.passed, 
         score: evaluation.overall_score,
         passedCriteria: `${passedCriteria}/${rubric.criteria.length}`
@@ -338,7 +380,7 @@ Provide evaluation in this exact JSON format:
       return evaluation;
 
     } catch (error) {
-      console.error('❌ Evaluation error:', error);
+      logger.error('❌ Evaluation error:', error);
       return this.getFallbackEvaluation(userInput, stage);
     }
   }
@@ -362,7 +404,7 @@ Provide evaluation in this exact JSON format:
     
     if (available.length === 0) {
       this.usedObjections.clear(); // Reset if all used
-      console.log('🔄 Reset objection list - all were used');
+      logger.log('🔄 Reset objection list - all were used');
     }
     
     const finalList = available.length > 0 ? available : objections;
@@ -370,7 +412,7 @@ Provide evaluation in this exact JSON format:
     this.usedObjections.add(selected);
     this.sessionData.lastObjection = selected;
     
-    console.log('🎭 Selected objection:', selected);
+    logger.log('🎭 Selected objection:', selected);
     return selected;
   }
 
@@ -467,7 +509,7 @@ Format as JSON:
   "overall": "encouraging summary"
 }`;
 
-      const response = await openai.chat.completions.create({
+      const response = await this.client.chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
@@ -477,7 +519,7 @@ Format as JSON:
       return JSON.parse(response.choices[0].message.content);
 
     } catch (error) {
-      console.error('❌ Coaching feedback error:', error);
+      logger.error('❌ Coaching feedback error:', error);
       
       // Fallback coaching
       return {
@@ -496,13 +538,13 @@ Format as JSON:
     this.currentStage = 'greeting';
     this.usedObjections.clear();
     this.sessionData = {};
-    console.log('🔄 OpenAI conversation reset');
+    logger.log('🔄 OpenAI conversation reset');
   }
 
   // Check if should random hang-up (for marathon mode)
   shouldRandomHangUp(mode = 'practice') {
     if (mode === 'marathon' && Math.random() < 0.25) { // 25% chance in marathon
-      console.log('🎲 Random hang-up triggered');
+      logger.log('🎲 Random hang-up triggered');
       return true;
     }
     return false;
