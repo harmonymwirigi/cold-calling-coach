@@ -1,7 +1,7 @@
-// src/components/roleplay/FunctionalPhoneInterface.jsx - FIXED COMPILATION ERROR
+// src/components/roleplay/FunctionalPhoneInterface.jsx - DATABASE SCHEMA FIXED
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle } from 'lucide-react';
+import {PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle, Send } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRoleplay } from '../../contexts/RoleplayContext';
 import { useProgress } from '../../contexts/ProgressContext';
@@ -28,7 +28,7 @@ const FunctionalPhoneInterface = () => {
     isSpeaking, 
     isInitialized,
     error: voiceError,
-    initializationAttempted: voiceInitAttempted, // Renamed to avoid conflict
+    initializationAttempted: voiceInitAttempted,
     startListening, 
     stopListening, 
     speakText,
@@ -47,10 +47,15 @@ const FunctionalPhoneInterface = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [userSpeechText, setUserSpeechText] = useState('');
   const [voiceServiceAvailable, setVoiceServiceAvailable] = useState(false);
+  
+  // Text input state for fallback
+  const [textInput, setTextInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
 
-  // Refs - Renamed to avoid conflict with hook variable
+  // Refs
   const durationInterval = useRef(null);
-  const componentInitAttempted = useRef(false); // Renamed from initializationAttempted
+  const componentInitAttempted = useRef(false);
+  const textInputRef = useRef(null);
 
   // Character data for the roleplay
   const characters = [
@@ -67,8 +72,8 @@ const FunctionalPhoneInterface = () => {
 
   // Initialize the roleplay when component mounts
   useEffect(() => {
-    if (componentInitAttempted.current) return; // Fixed variable name
-    componentInitAttempted.current = true; // Fixed variable name
+    if (componentInitAttempted.current) return;
+    componentInitAttempted.current = true;
 
     const initializeRoleplay = async () => {
       try {
@@ -83,13 +88,24 @@ const FunctionalPhoneInterface = () => {
           throw new Error(access?.reason || 'Access denied to this roleplay');
         }
 
-        // Check voice service status but don't block on it
-        const voiceAvailable = await checkVoiceServiceAvailability();
-        setVoiceServiceAvailable(voiceAvailable);
+        // Try to initialize voice service but don't wait too long
+        logger.log('🎤 Attempting to initialize voice service...');
+        try {
+          // Give voice service a better chance to initialize
+          const voiceInitPromise = checkVoiceServiceAvailability();
+          const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(false), 5000));
+          
+          const voiceAvailable = await Promise.race([voiceInitPromise, timeoutPromise]);
+          setVoiceServiceAvailable(voiceAvailable);
 
-        if (!voiceAvailable) {
-          logger.warn('⚠️ Voice service not available - continuing with limited functionality');
-          setError('Voice service unavailable - you can still practice by typing responses');
+          if (voiceAvailable) {
+            logger.log('✅ Voice service available');
+          } else {
+            logger.warn('⚠️ Voice service not available - continuing with text input');
+          }
+        } catch (voiceInitError) {
+          logger.warn('⚠️ Voice service initialization failed:', voiceInitError);
+          setVoiceServiceAvailable(false);
         }
 
         // Start the roleplay session regardless of voice service status
@@ -117,27 +133,26 @@ const FunctionalPhoneInterface = () => {
   // Check voice service availability with timeout
   const checkVoiceServiceAvailability = async () => {
     try {
-      // Give voice service a chance to initialize but don't wait too long
-      if (voiceInitAttempted && !isInitialized) { // Fixed variable name
-        logger.log('⏳ Waiting briefly for voice service...');
-        
-        // Wait up to 3 seconds for voice service to initialize
-        const timeout = new Promise(resolve => setTimeout(() => resolve(false), 3000));
-        const voiceReady = new Promise(resolve => {
-          const checkVoice = () => {
-            if (isInitialized) {
-              resolve(true);
-            } else {
-              setTimeout(checkVoice, 100);
-            }
-          };
-          checkVoice();
-        });
-
-        return await Promise.race([voiceReady, timeout]);
+      logger.log('🎤 Checking voice service availability...');
+      
+      // Check browser compatibility first
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        logger.warn('Speech recognition not supported in this browser');
+        return false;
       }
 
-      return isInitialized;
+      if (!('speechSynthesis' in window)) {
+        logger.warn('Speech synthesis not supported in this browser');
+        return false;
+      }
+
+      // Try to initialize voice service
+      if (voiceService && typeof voiceService.initialize === 'function') {
+        await voiceService.initialize();
+        return voiceService.isInitialized;
+      }
+
+      return false;
     } catch (error) {
       logger.warn('Voice service availability check failed:', error);
       return false;
@@ -176,7 +191,6 @@ const FunctionalPhoneInterface = () => {
     if (voiceError) {
       logger.warn('Voice error occurred:', voiceError);
       setVoiceServiceAvailable(false);
-      // Don't set this as a blocking error - just show a warning
     }
   }, [voiceError]);
 
@@ -208,7 +222,7 @@ const FunctionalPhoneInterface = () => {
     }
 
     if (!voiceServiceAvailable) {
-      setError('Voice service not available. Please check your microphone and browser permissions.');
+      logger.warn('Voice service not available, please use text input');
       return;
     }
 
@@ -244,6 +258,31 @@ const FunctionalPhoneInterface = () => {
     }
   };
 
+  // Handle text input submission
+  const handleTextSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!textInput.trim() || isProcessing) {
+      return;
+    }
+
+    const userText = textInput.trim();
+    setIsTyping(true);
+    setTextInput('');
+    setUserSpeechText(userText);
+    
+    logger.log('⌨️ User typed:', userText);
+    
+    try {
+      await processUserInput(userText, 1.0); // High confidence for typed input
+    } catch (error) {
+      logger.error('❌ Error processing typed input:', error);
+      setError('Failed to process your message. Please try again.');
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   const processUserInput = async (transcript, confidence) => {
     if (!currentSession || callState !== 'connected') {
       logger.warn('⚠️ Cannot process input - session not ready');
@@ -253,7 +292,7 @@ const FunctionalPhoneInterface = () => {
     try {
       logger.log('🔄 Processing user input:', transcript);
 
-      // Log pronunciation issues for low confidence
+      // Log pronunciation issues for low confidence (voice only)
       if (confidence < 0.7) {
         logger.log('📊 Low confidence speech detected:', confidence);
       }
@@ -314,10 +353,11 @@ const FunctionalPhoneInterface = () => {
 
   const updateProgressData = async (sessionResult) => {
     try {
+      // FIXED: Remove the problematic 'last_completed' field
       const progressUpdate = {
         total_attempts: 1,
-        total_passes: sessionResult.passed ? 1 : 0,
-        last_completed: new Date().toISOString()
+        total_passes: sessionResult.passed ? 1 : 0
+        // Removed last_completed - this field doesn't exist in the database
       };
 
       // For marathon mode, update marathon passes
@@ -337,9 +377,13 @@ const FunctionalPhoneInterface = () => {
         progressUpdate.legend_attempt_used = true;
       }
 
+      logger.log('📊 Updating progress:', progressUpdate);
       await updateProgress(type, progressUpdate);
+      logger.log('✅ Progress updated successfully');
+
     } catch (error) {
       logger.error('❌ Error updating progress:', error);
+      // Don't throw - let the session complete even if progress update fails
     }
   };
 
@@ -394,11 +438,7 @@ const FunctionalPhoneInterface = () => {
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-white mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold mb-2">Initializing Roleplay</h2>
           <p className="text-blue-200">Setting up your practice session...</p>
-          {voiceError && (
-            <p className="text-yellow-200 text-sm mt-2">
-              Voice service is starting up...
-            </p>
-          )}
+          <p className="text-blue-300 text-sm mt-2">Checking voice service...</p>
         </div>
       </div>
     );
@@ -418,7 +458,7 @@ const FunctionalPhoneInterface = () => {
           setCallDuration(0);
           setCurrentMessage('');
           setEvaluation(null);
-          window.location.reload(); // Restart the component
+          window.location.reload();
         }}
       />
     );
@@ -438,7 +478,7 @@ const FunctionalPhoneInterface = () => {
           <div className="font-semibold">{type.replace('_', ' ').toUpperCase()}</div>
           <div className="text-sm opacity-80">{mode.toUpperCase()} MODE</div>
         </div>
-        <div className="w-32" /> {/* Spacer */}
+        <div className="w-32" />
       </div>
 
       {/* Error Message */}
@@ -452,9 +492,15 @@ const FunctionalPhoneInterface = () => {
       )}
 
       {/* Voice Service Status */}
-      {!voiceServiceAvailable && !error && (
+      {!voiceServiceAvailable && (
         <div className="bg-blue-600/20 text-blue-200 p-3 text-center text-sm">
-          💡 Voice service not available - you can practice by typing responses or try refreshing
+          💡 Voice service not available - you can practice by typing responses. 
+          <button 
+            onClick={() => window.location.reload()} 
+            className="ml-2 underline hover:text-blue-100"
+          >
+            Try refreshing
+          </button>
         </div>
       )}
 
@@ -503,6 +549,15 @@ const FunctionalPhoneInterface = () => {
               </div>
             </div>
           )}
+
+          {/* Typing indicator */}
+          {isTyping && (
+            <div className="absolute -top-2 -right-2">
+              <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
+                <span className="text-xs text-white">⌨️</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Character Info */}
@@ -524,7 +579,7 @@ const FunctionalPhoneInterface = () => {
         {/* User Speech Display */}
         {userSpeechText && (
           <div className="bg-blue-600/20 backdrop-blur rounded-lg p-3 mb-4 max-w-md text-center border border-blue-400/30">
-            <p className="text-xs text-blue-200 mb-1">🎤 You said:</p>
+            <p className="text-xs text-blue-200 mb-1">{voiceServiceAvailable ? '🎤 You said:' : '⌨️ You typed:'}</p>
             <p className="text-sm text-blue-100">&quot;{userSpeechText}&quot;</p>
           </div>
         )}
@@ -544,12 +599,12 @@ const FunctionalPhoneInterface = () => {
             </div>
           )}
           
-          {callState === 'connected' && !isListening && !isSpeaking && !isProcessing && (
+          {callState === 'connected' && !isListening && !isSpeaking && !isProcessing && !isTyping && (
             <div className="space-y-2">
               <p className="text-blue-200">
-                {voiceServiceAvailable ? '🎤 Tap microphone to speak' : '⌨️ Voice not available - type your response'}
+                {voiceServiceAvailable ? '🎤 Tap microphone to speak' : '⌨️ Type your response below'}
               </p>
-              {process.env.NODE_ENV === 'development' && voiceService && (
+              {voiceServiceAvailable && process.env.NODE_ENV === 'development' && (
                 <button
                   onClick={() => voiceService.testSpeech("Hello, this is a test.")}
                   className="text-xs bg-blue-600/20 px-2 py-1 rounded text-blue-200 hover:bg-blue-600/30"
@@ -574,11 +629,43 @@ const FunctionalPhoneInterface = () => {
           {isProcessing && (
             <p className="text-yellow-200">🤖 Processing your response...</p>
           )}
+
+          {isTyping && (
+            <p className="text-blue-200">⌨️ Processing your message...</p>
+          )}
         </div>
+
+        {/* Text Input - Always show when connected */}
+        {callState === 'connected' && !isProcessing && !isTyping && (
+          <div className="w-full max-w-md mb-6">
+            <form onSubmit={handleTextSubmit} className="flex space-x-2">
+              <input
+                ref={textInputRef}
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder={voiceServiceAvailable ? "Type here or use voice..." : "Type your response here..."}
+                className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/50 focus:outline-none focus:border-blue-400 focus:bg-white/20"
+                disabled={isProcessing || isTyping}
+                autoFocus={!voiceServiceAvailable}
+              />
+              <button
+                type="submit"
+                disabled={!textInput.trim() || isProcessing || isTyping}
+                className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-500 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+            <p className="text-xs text-blue-300 mt-2 text-center">
+              Press Enter to send your message
+            </p>
+          </div>
+        )}
 
         {/* Controls */}
         <div className="flex flex-col items-center space-y-6">
-          {/* Voice Controls */}
+          {/* Voice Controls (only show if voice is available) */}
           {callState === 'connected' && voiceServiceAvailable && (
             <div className="flex space-x-8">
               {/* Mute Button */}
@@ -646,8 +733,8 @@ const FunctionalPhoneInterface = () => {
       {/* Instructions */}
       <div className="bg-black/20 p-4 text-center text-sm text-white/80">
         {callState === 'dialing' && "Connecting to prospect..."}
-        {callState === 'connected' && !isListening && !isSpeaking && voiceServiceAvailable && "Tap microphone to speak, then release when finished"}
-        {callState === 'connected' && !isListening && !isSpeaking && !voiceServiceAvailable && "Voice service unavailable - practice by typing responses"}
+        {callState === 'connected' && !isListening && !isSpeaking && voiceServiceAvailable && "Use microphone or type your response"}
+        {callState === 'connected' && !isListening && !isSpeaking && !voiceServiceAvailable && "Type your response in the text box above"}
         {callState === 'connected' && isListening && "Speaking... Release when finished"}
         {callState === 'connected' && isSpeaking && "AI is responding..."}
         {callState === 'ended' && "Call completed - review your results"}
@@ -665,7 +752,6 @@ const CallResults = ({ sessionResults, duration, roleplayType, mode, onContinue,
   };
 
   const evaluation = sessionResults.evaluations?.[0] || {};
-  const coaching = sessionResults.coaching || {};
 
   const getResultData = () => {
     if (sessionResults.passed && evaluation.overall_score >= 3.5) {
