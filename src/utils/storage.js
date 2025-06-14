@@ -1,4 +1,14 @@
 // src/utils/storage.js
+import logger from './logger';
+import { analytics } from './analytics';
+import { errorHandler } from './errorHandler';
+import { performanceMonitor } from './performance';
+import { AppError } from './errorHandler';
+import { featureFlags } from './featureFlags';
+import { cache } from './cache';
+import { validation } from './validation';
+import { ApiClient } from './apiClient';
+
 export const storage = {
     // Safely get from localStorage
     get(key, defaultValue = null) {
@@ -68,11 +78,9 @@ export const storage = {
     AppError,
     errorHandler,
     performanceMonitor,
-    logger,
     analytics,
     featureFlags,
     cache,
     validation,
-    ApiClient,
-    storage
+    ApiClient
   };

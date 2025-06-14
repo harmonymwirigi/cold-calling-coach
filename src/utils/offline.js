@@ -1,3 +1,5 @@
+import logger from './logger';
+
 // src/utils/offline.js
 export const offlineManager = {
     isOnline: navigator.onLine,

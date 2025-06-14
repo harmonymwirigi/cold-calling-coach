@@ -1,5 +1,5 @@
-
 // src/utils/validation.js
+
 export const validation = {
     // Email validation
     isValidEmail(email) {
@@ -7,10 +7,62 @@ export const validation = {
       return emailRegex.test(email);
     },
   
+    // Password validation
+    isValidPassword(password) {
+      return password && password.length >= 8;
+    },
+  
+    // Name validation
+    isValidName(name) {
+      return name && name.length >= 2;
+    },
+  
     // Phone number validation
     isValidPhone(phone) {
-      const phoneRegex = /^\+?[\d\s\-\(\)]{10,}$/;
+      const phoneRegex = /^\+?[\d\s-()]{10,}$/;
       return phoneRegex.test(phone);
+    },
+  
+    // URL validation
+    isValidUrl(url) {
+      try {
+        new URL(url);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  
+    // Validate form data
+    validateForm(formData, rules) {
+      const errors = {};
+      
+      for (const [field, value] of Object.entries(formData)) {
+        const fieldRules = rules[field];
+        if (!fieldRules) continue;
+  
+        if (fieldRules.required && !value) {
+          errors[field] = 'This field is required';
+        } else if (value) {
+          if (fieldRules.email && !this.isValidEmail(value)) {
+            errors[field] = 'Invalid email format';
+          }
+          if (fieldRules.minLength && value.length < fieldRules.minLength) {
+            errors[field] = `Must be at least ${fieldRules.minLength} characters`;
+          }
+          if (fieldRules.maxLength && value.length > fieldRules.maxLength) {
+            errors[field] = `Must be no more than ${fieldRules.maxLength} characters`;
+          }
+          if (fieldRules.pattern && !fieldRules.pattern.test(value)) {
+            errors[field] = fieldRules.message || 'Invalid format';
+          }
+        }
+      }
+  
+      return {
+        isValid: Object.keys(errors).length === 0,
+        errors
+      };
     },
   
     // Strong password validation
@@ -18,11 +70,6 @@ export const validation = {
       // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
       const strongRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/;
       return strongRegex.test(password);
-    },
-  
-    // Name validation
-    isValidName(name) {
-      return name && name.trim().length >= 2 && name.trim().length <= 50;
     },
   
     // Sanitize input

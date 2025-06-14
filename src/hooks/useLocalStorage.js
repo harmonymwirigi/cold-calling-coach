@@ -1,5 +1,7 @@
+import { useState } from 'react';
 // src/hooks/useLocalStorage.js
-import { useState, useEffect } from 'react';
+import logger from '../utils/logger';
+
 
 export const useLocalStorage = (key, initialValue) => {
   // Get from local storage then parse stored json or return initialValue

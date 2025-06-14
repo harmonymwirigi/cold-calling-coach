@@ -1,5 +1,7 @@
 // src/hooks/usePWA.js
 import { useState, useEffect } from 'react';
+import logger from '../utils/logger';
+
 
 export const usePWA = () => {
   const [isInstallable, setIsInstallable] = useState(false);

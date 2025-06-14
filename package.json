@@ -37,6 +37,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "build": "react-scripts build",
     "test": "react-scripts test",
     "test:watch": "react-scripts test --watch",
     "test:coverage": "react-scripts test --coverage --watchAll=false",
@@ -50,9 +51,8 @@
     "analyze": "npm run build && npx serve -s build",
     "deploy": "npm run build && vercel --prod",
     "dev": "react-scripts start",
-    "build": "GENERATE_SOURCEMAP=false react-scripts build",
-    "vercel-build": "CI=false npm run build"
-  },
+    "vercel-build": "set CI=false && npm run build"
+},
   "browserslist": {
     "production": [
       ">0.2%",

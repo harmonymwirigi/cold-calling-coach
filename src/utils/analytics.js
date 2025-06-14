@@ -1,3 +1,5 @@
+import logger from './logger';
+
 // src/utils/analytics.js
 export const analytics = {
     // Initialize analytics
@@ -5,7 +7,7 @@ export const analytics = {
       if (typeof window === 'undefined') return;
   
       // Initialize performance monitoring
-      performanceMonitor.trackPageLoad();
+      // performanceMonitor.trackPageLoad();
       
       // Track page views
       this.trackPageView();

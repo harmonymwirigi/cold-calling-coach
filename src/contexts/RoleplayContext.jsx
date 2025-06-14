@@ -2,7 +2,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { openAIService } from '../services/openaiService';
 import { voiceService } from '../services/voiceService';
-import { useAuth } from './AuthContext';
 import logger from '../utils/logger';
 
 const RoleplayContext = createContext();
@@ -82,7 +81,7 @@ export const RoleplayProvider = ({ children }) => {
     } finally {
       setIsProcessing(false);
     }
-  }, [endSession]);
+  }, [endSession, setIsProcessing]);
 
   // Then use them in useEffect
   useEffect(() => {
@@ -99,7 +98,7 @@ export const RoleplayProvider = ({ children }) => {
         if (silenceSeconds === 10) {
           handleSilenceWarning(silenceSeconds);
         } else if (silenceSeconds >= 15) {
-          handleSilenceTimeout();
+          handleSilenceTimeout('silence_timeout');
         }
       }, 1000);
     }
@@ -166,7 +165,7 @@ export const RoleplayProvider = ({ children }) => {
       logger.error('❌ Error starting roleplay session:', error);
       throw error;
     }
-  }, []);
+  }, [setCurrentSession, setCallState]);
 
   const handleUserResponse = useCallback(async (response) => {
     try {
@@ -182,7 +181,7 @@ export const RoleplayProvider = ({ children }) => {
     } finally {
       setIsProcessing(false);
     }
-  }, [currentSession]);
+  }, [currentSession, setIsProcessing]);
 
   const handleProspectResponse = useCallback(async (response) => {
     if (!currentSession) return;
@@ -198,33 +197,23 @@ export const RoleplayProvider = ({ children }) => {
         pitch: 1.0
       });
       
-      logger.log('✅ Speech result:', speechResult);
-
-      // Update session with prospect response
-      const updatedSession = {
-        ...currentSession,
-        conversationHistory: [
-          ...currentSession.conversationHistory,
-          { speaker: 'prospect', content: response, timestamp: new Date().toISOString() }
-        ]
-      };
-
-      setCurrentSession(updatedSession);
-
-    } catch (error) {
-      logger.error('❌ Error handling prospect response:', error);
+      logger.log('✅ Speech completed:', speechResult);
       
-      // Try a fallback approach - just update the session without speech
-      const updatedSession = {
-        ...currentSession,
+      // Update conversation history
+      setCurrentSession(prev => ({
+        ...prev,
         conversationHistory: [
-          ...currentSession.conversationHistory,
-          { speaker: 'prospect', content: response, timestamp: new Date().toISOString() }
+          ...prev.conversationHistory,
+          { role: 'prospect', content: response }
         ]
-      };
-      setCurrentSession(updatedSession);
+      }));
+      
+      return speechResult;
+    } catch (error) {
+      logger.error('❌ Error speaking prospect response:', error);
+      throw error;
     }
-  }, [currentSession]);
+  }, [currentSession, setCurrentSession]);
 
   const resetSession = useCallback(() => {
     setCurrentSession(null);
@@ -268,6 +257,7 @@ export const RoleplayProvider = ({ children }) => {
     callState,
     sessionResults,
     isProcessing,
+    isListening,
     
     // Actions
     startRoleplaySession,

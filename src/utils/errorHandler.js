@@ -1,3 +1,5 @@
+import logger from './logger';
+
 // src/utils/errorHandler.js
 class AppError extends Error {
     constructor(message, statusCode = 500, isOperational = true) {

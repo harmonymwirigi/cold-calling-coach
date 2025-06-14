@@ -1,3 +1,5 @@
+import logger from './logger';
+
 // src/utils/cache.js
 export const cache = {
     // In-memory cache for API responses

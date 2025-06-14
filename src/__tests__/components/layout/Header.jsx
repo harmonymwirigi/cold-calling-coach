@@ -1,7 +1,6 @@
 // src/components/layout/Header.jsx
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { Menu, User, LogOut, Settings } from 'lucide-react';
 
 const Header = () => {
   const { user, userProfile, signOut } = useAuth();

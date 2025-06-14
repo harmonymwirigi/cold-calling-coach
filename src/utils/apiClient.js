@@ -1,3 +1,5 @@
+import logger from './logger';
+
 // src/utils/apiClient.js
 export class ApiClient {
     constructor(baseURL, options = {}) {
@@ -28,14 +30,9 @@ export class ApiClient {
       // Retry logic
       for (let attempt = 0; attempt <= this.retries; attempt++) {
         try {
-          const startTime = performance.now();
           const response = await fetch(url, requestOptions);
-          const endTime = performance.now();
           
           clearTimeout(timeoutId);
-          
-          // Track API performance
-          performanceMonitor.trackApiCall(endpoint, startTime, endTime, response.ok);
           
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);

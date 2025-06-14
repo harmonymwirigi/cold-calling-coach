@@ -8,18 +8,24 @@ module.exports = {
     'no-console': 'off',
     'no-unused-vars': 'warn',
     'jsx-a11y/anchor-is-valid': 'warn',
-    'import/no-anonymous-default-export': 'warn'
+    'import/no-anonymous-default-export': 'warn',
+    'no-restricted-globals': 'off' // Allow 'self' in service workers
   },
   env: {
     browser: true,
     es6: true,
-    node: true
+    node: true,
+    serviceworker: true // Add service worker environment
   },
-  parserOptions: {
-    ecmaVersion: 2020,
-    sourceType: 'module',
-    ecmaFeatures: {
-      jsx: true
+  overrides: [
+    {
+      files: ['**/serviceWorker.js', '**/sw.js'],
+      env: {
+        serviceworker: true
+      },
+      rules: {
+        'no-restricted-globals': 'off'
+      }
     }
-  }
+  ]
 };

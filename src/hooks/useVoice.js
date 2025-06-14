@@ -1,6 +1,8 @@
 // src/hooks/useVoice.js
 import { useState, useRef, useCallback } from 'react';
 import { voiceService } from '../services/polly';
+import logger from '../utils/logger';
+
 
 export const useVoice = () => {
   const [isListening, setIsListening] = useState(false);

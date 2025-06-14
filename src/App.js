@@ -6,7 +6,6 @@ import { RoleplayProvider } from './contexts/RoleplayContext';
 import { ProgressProvider } from './contexts/ProgressContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Layout from './components/layout/Layout';
-import LoadingSpinner from './components/ui/LoadingSpinner';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 
 // Page imports

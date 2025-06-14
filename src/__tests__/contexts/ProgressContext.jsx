@@ -2,6 +2,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 import { supabase } from '../services/supabase';
+import logger from '../../utils/logger';
+
 
 const ProgressContext = createContext();
 
