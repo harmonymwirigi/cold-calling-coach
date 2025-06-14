@@ -392,4 +392,5 @@ app.listen(PORT, () => {
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   DB Test: http://localhost:${PORT}/api/test-db`);
   console.log(`\n🎯 Ready to receive verification requests!\n`);
+  
 });
