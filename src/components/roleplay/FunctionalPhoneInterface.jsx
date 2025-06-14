@@ -5,7 +5,7 @@ import {PhoneOff, Mic, MicOff, Volume2, VolumeX, AlertCircle, CheckCircle } from
 import { useAuth } from '../../contexts/AuthContext';
 import { useRoleplay } from '../../contexts/RoleplayContext';
 import { useProgress } from '../../contexts/ProgressContext';
-import { useVoice } from '../hooks/useVoice';
+import { useVoice } from '../../hooks/useVoice';
 import logger from '../../utils/logger';
 
 const FunctionalPhoneInterface = () => {

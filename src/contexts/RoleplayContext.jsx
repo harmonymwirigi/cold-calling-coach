@@ -1,7 +1,7 @@
 // src/contexts/RoleplayContext.jsx
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { openAIService } from '../services/openaiService';
-import { useVoice } from '../hooks/useVoice';
+import { voiceService } from '../services/voiceService';
 import logger from '../utils/logger';
 
 const RoleplayContext = createContext();
@@ -85,7 +85,7 @@ export const RoleplayProvider = ({ children }) => {
 
   // Then use them in useEffect
   useEffect(() => {
-    useVoice.setSilenceCallbacks(
+    voiceService.setSilenceCallbacks(
       handleSilenceWarning,
       handleSilenceTimeout
     );
@@ -115,7 +115,7 @@ export const RoleplayProvider = ({ children }) => {
       
       // Reset services
       openAIService.resetConversation();
-      useVoice.cleanup();
+      voiceService.cleanup();
 
       // Create session data
       const sessionData = {
@@ -147,7 +147,7 @@ export const RoleplayProvider = ({ children }) => {
         try {
           // Speak the greeting directly
           logger.log('🔊 Attempting to speak greeting...');
-          await useVoice.speakText(greeting, {
+          await voiceService.speakText(greeting, {
             voiceId: 'Joanna',
             rate: 0.9,
             pitch: 1.0
@@ -191,7 +191,7 @@ export const RoleplayProvider = ({ children }) => {
       
       // Speak the prospect's response
       logger.log('🔊 Attempting to speak with voice service...');
-      const speechResult = await useVoice.speakText(response, {
+      const speechResult = await voiceService.speakText(response, {
         voiceId: 'Joanna', // Female US voice
         rate: 0.9,
         pitch: 1.0
@@ -221,7 +221,7 @@ export const RoleplayProvider = ({ children }) => {
     setSessionResults(null);
     setIsProcessing(false);
     openAIService.resetConversation();
-    useVoice.cleanup();
+    voiceService.cleanup();
   }, []);
 
   const handleStart = useCallback(async () => {

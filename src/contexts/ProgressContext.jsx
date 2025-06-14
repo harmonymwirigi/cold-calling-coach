@@ -1,5 +1,5 @@
 // src/contexts/ProgressContext.jsx
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import { userService, achievementService } from '../services/supabase';
 
@@ -21,20 +21,7 @@ export const ProgressProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load user progress when user changes
-  useEffect(() => {
-    if (user) {
-      loadUserData();
-    } else {
-      // Clear data when user logs out
-      setProgress({});
-      setSessions([]);
-      setAchievements([]);
-      setLoading(false);
-    }
-  }, [user]);
-
-  const loadUserData = async () => {
+  const loadUserData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -70,7 +57,20 @@ export const ProgressProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  // Load user progress when user changes
+  useEffect(() => {
+    if (user) {
+      loadUserData();
+    } else {
+      // Clear data when user logs out
+      setProgress({});
+      setSessions([]);
+      setAchievements([]);
+      setLoading(false);
+    }
+  }, [user, loadUserData]);
 
   // Update progress for a specific roleplay type
   const updateProgress = async (roleplayType, progressData) => {
