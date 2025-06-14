@@ -1,733 +1,717 @@
-// src/services/voiceService.js - ENHANCED VERSION WITH AWS POLLY
+// src/services/openaiService.js - ENHANCED VERSION WITH PROPER ROLEPLAY LOGIC
+import OpenAI from 'openai';
 import logger from '../utils/logger';
-import AWS from 'aws-sdk';
 
-export class VoiceService {
+// Roleplay stage definitions
+const ROLEPLAY_STAGES = {
+  GREETING: 'greeting',
+  OPENER: 'opener',
+  EARLY_OBJECTION: 'early_objection',
+  MINI_PITCH: 'mini_pitch',
+  POST_PITCH: 'post_pitch',
+  QUALIFICATION: 'qualification',
+  MEETING_ASK: 'meeting_ask',
+  WRAP_UP: 'wrap_up',
+  HANG_UP: 'hang_up'
+};
+
+// Objection libraries from roleplay instructions
+const EARLY_OBJECTIONS = [
+  "What's this about?",
+  "I'm not interested",
+  "We don't take cold calls",
+  "Now is not a good time",
+  "I have a meeting",
+  "Can you call me later?",
+  "I'm about to go into a meeting",
+  "Send me an email",
+  "Can you send me the information?",
+  "Can you message me on WhatsApp?",
+  "Who gave you this number?",
+  "This is my personal number",
+  "Where did you get my number?",
+  "What are you trying to sell me?",
+  "Is this a sales call?",
+  "Is this a cold call?",
+  "Are you trying to sell me something?",
+  "We are ok for the moment",
+  "We are all good / all set",
+  "We're not looking for anything right now",
+  "We are not changing anything",
+  "How long is this going to take?",
+  "Is this going to take long?",
+  "What company are you calling from?",
+  "Who are you again?",
+  "Where are you calling from?",
+  "I never heard of you",
+  "Not interested right now",
+  "Just send me the details"
+];
+
+const POST_PITCH_OBJECTIONS = [
+  "It's too expensive for us.",
+  "We have no budget for this right now.",
+  "Your competitor is cheaper.",
+  "Can you give us a discount?",
+  "This isn't a good time.",
+  "We've already set this year's budget.",
+  "Call me back next quarter.",
+  "We're busy with other projects right now.",
+  "We already use [competitor] and we're happy.",
+  "We built something similar ourselves.",
+  "How exactly are you better than [competitor]?",
+  "Switching providers seems like a lot of work.",
+  "I've never heard of your company.",
+  "Who else like us have you worked with?",
+  "Can you send customer testimonials?",
+  "How do I know this will really work?",
+  "I'm not the decision-maker.",
+  "I need approval from my team first.",
+  "Can you send details so I can forward them?",
+  "We'll need buy-in from other departments.",
+  "How long does this take to implement?",
+  "We don't have time to learn a new system.",
+  "I'm concerned this won't integrate with our existing tools.",
+  "What happens if this doesn't work as promised?"
+];
+
+const IMPATIENCE_PHRASES = [
+  "Hello? Are you still with me?",
+  "Can you hear me?",
+  "Just checking you're there…",
+  "Still on the line?",
+  "I don't have much time for this.",
+  "Sounds like you are gone.",
+  "Are you an idiot.",
+  "What is going on.",
+  "Are you okay to continue?",
+  "I am afraid I have to go."
+];
+
+// Detailed rubrics from roleplay instructions
+const RUBRICS = {
+  OPENER: {
+    name: 'Opener',
+    passThreshold: 3,
+    maxScore: 4,
+    criteria: [
+      {
+        id: 'clear_opener',
+        description: 'Clear cold call opener (pattern interrupt, permission-based, or value-first)',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return lowerText.includes('calling') || lowerText.includes('reach out') || 
+                 lowerText.includes('connect') || lowerText.includes('minute') ||
+                 lowerText.includes('quick') || lowerText.includes('moment');
+        }
+      },
+      {
+        id: 'casual_tone',
+        description: 'Casual, confident tone (uses contractions and short phrases)',
+        check: (text) => {
+          const hasContractions = /\b(i'm|you're|it's|that's|we're|i've|haven't|don't|won't|can't|wouldn't)\b/i.test(text);
+          const wordCount = text.split(/\s+/).length;
+          return hasContractions || wordCount < 30;
+        }
+      },
+      {
+        id: 'empathy',
+        description: 'Demonstrates empathy: Acknowledges the interruption, unfamiliarity, or randomness',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return lowerText.includes('out of the blue') || lowerText.includes('don\'t know me') ||
+                 lowerText.includes('cold call') || lowerText.includes('caught you') ||
+                 lowerText.includes('interrupting') || lowerText.includes('unexpected') ||
+                 lowerText.includes('random') || lowerText.includes('surprise');
+        }
+      },
+      {
+        id: 'soft_question',
+        description: 'Ends with a soft question',
+        check: (text) => {
+          const trimmed = text.trim();
+          return trimmed.endsWith('?') && (
+            trimmed.toLowerCase().includes('can i') || trimmed.toLowerCase().includes('could i') ||
+            trimmed.toLowerCase().includes('would you') || trimmed.toLowerCase().includes('is it okay') ||
+            trimmed.toLowerCase().includes('mind if') || trimmed.toLowerCase().includes('fair enough')
+          );
+        }
+      }
+    ]
+  },
+  OBJECTION_HANDLING: {
+    name: 'Objection Handling',
+    passThreshold: 3,
+    maxScore: 4,
+    criteria: [
+      {
+        id: 'calm_acknowledgment',
+        description: 'Acknowledges calmly (e.g., "Fair enough" / "Totally get that")',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return lowerText.includes('fair') || lowerText.includes('understand') ||
+                 lowerText.includes('get that') || lowerText.includes('appreciate') ||
+                 lowerText.includes('makes sense') || lowerText.includes('hear you');
+        }
+      },
+      {
+        id: 'no_argue',
+        description: 'Doesn\'t argue or pitch immediately',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return !lowerText.includes('but you') && !lowerText.includes('actually') &&
+                 !lowerText.includes('wrong') && text.length < 150;
+        }
+      },
+      {
+        id: 'reframe',
+        description: 'Reframes or buys time in 1 sentence',
+        check: (text) => {
+          const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+          return sentences.length <= 2;
+        }
+      },
+      {
+        id: 'forward_question',
+        description: 'Ends with a forward-moving question',
+        check: (text) => {
+          return text.trim().endsWith('?');
+        }
+      }
+    ]
+  },
+  MINI_PITCH: {
+    name: 'Mini Pitch + Soft Discovery',
+    passThreshold: 3,
+    maxScore: 4,
+    criteria: [
+      {
+        id: 'short',
+        description: 'Short (1-2 sentences)',
+        check: (text) => {
+          const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+          return sentences.length <= 3;
+        }
+      },
+      {
+        id: 'outcome_focused',
+        description: 'Focuses on problem solved or outcome delivered',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return lowerText.includes('help') || lowerText.includes('solve') ||
+                 lowerText.includes('improve') || lowerText.includes('increase') ||
+                 lowerText.includes('reduce') || lowerText.includes('save');
+        }
+      },
+      {
+        id: 'simple_english',
+        description: 'Simple English (no jargon or buzzwords)',
+        check: (text) => {
+          const jargon = /\b(synergy|leverage|paradigm|optimize|streamline|scalable|robust|innovative|cutting-edge|disruptive)\b/i;
+          return !jargon.test(text);
+        }
+      },
+      {
+        id: 'natural',
+        description: 'Sounds natural (not robotic or memorized)',
+        check: (text) => {
+          const wordCount = text.split(/\s+/).length;
+          return wordCount < 50 && /\b(i|we|you|your)\b/i.test(text);
+        }
+      }
+    ]
+  },
+  UNCOVERING_PAIN: {
+    name: 'Uncovering Pain',
+    passThreshold: 2,
+    maxScore: 3,
+    criteria: [
+      {
+        id: 'tied_question',
+        description: 'Asks a short question tied to the pitch',
+        check: (text) => {
+          return text.includes('?') && text.split(/\s+/).length < 20;
+        }
+      },
+      {
+        id: 'open_curious',
+        description: 'Question is open/curious',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return lowerText.includes('how') || lowerText.includes('what') ||
+                 lowerText.includes('tell me') || lowerText.includes('curious');
+        }
+      },
+      {
+        id: 'soft_tone',
+        description: 'Tone is soft and non-pushy',
+        check: (text) => {
+          const lowerText = text.toLowerCase();
+          return !lowerText.includes('must') && !lowerText.includes('need to') &&
+                 !lowerText.includes('have to') && !lowerText.includes('should');
+        }
+      }
+    ]
+  }
+};
+
+export class OpenAIService {
   constructor() {
-    this.recognition = null;
-    this.isListening = false;
-    this.isSpeaking = false;
-    this.silenceTimer = null;
-    this.silenceStartTime = null;
-    this.onSilenceCallback = null;
-    this.onHangupCallback = null;
-    this.currentUtterance = null;
-    this.synthesis = null;
-    this.audioContext = null;
+    this.conversationHistory = [];
+    this.currentStage = ROLEPLAY_STAGES.GREETING;
+    this.usedObjections = new Set();
+    this.sessionData = {};
     this.isInitialized = false;
-    this.voices = [];
-    this.initializationPromise = null;
-    
-    // AWS Polly configuration
-    this.polly = null;
-    this.pollyEnabled = false;
-    this.preferredVoiceId = 'Joanna'; // Natural sounding US English voice
-    
-    // Audio queue for smooth playback
-    this.audioQueue = [];
-    this.isPlayingAudio = false;
-    
-    // Continuous recognition for interruptions
-    this.continuousMode = false;
-    this.onInterruptCallback = null;
-    
-    // Bind methods
-    this.initialize = this.initialize.bind(this);
-    this.startListening = this.startListening.bind(this);
-    this.stopListening = this.stopListening.bind(this);
-    this.speakText = this.speakText.bind(this);
-    this.cleanup = this.cleanup.bind(this);
+    this.silenceStartTime = null;
+    this.lastUserInput = null;
   }
 
-  // Initialize the voice service with AWS Polly support
   async initialize() {
     try {
-      if (this.initializationPromise) {
-        logger.log('🎤 Voice service initialization already in progress');
-        return await this.initializationPromise;
+      if (this.isInitialized) return true;
+
+      logger.log('🤖 Initializing OpenAI service...');
+
+      if (!process.env.REACT_APP_OPENAI_API_KEY) {
+        throw new Error('OpenAI API key not found');
       }
 
-      if (this.isInitialized === true) {
-        logger.log('🎤 Voice service already initialized');
-        return true;
-      }
-
-      this.initializationPromise = this._performInitialization();
-      const result = await this.initializationPromise;
-      this.initializationPromise = null;
-      
-      return result;
-
-    } catch (error) {
-      this.initializationPromise = null;
-      logger.error('❌ Voice service initialization failed:', error);
-      this.isInitialized = false;
-      throw error;
-    }
-  }
-
-  async _performInitialization() {
-    logger.log('🎤 Starting voice service initialization...');
-
-    // Check browser compatibility
-    const compatibility = this.checkCompatibility();
-    if (!compatibility.compatible) {
-      throw new Error(`Browser not compatible: ${compatibility.issues.join(', ')}`);
-    }
-
-    // Initialize speech synthesis
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      this.synthesis = window.speechSynthesis;
-      logger.log('✅ Speech synthesis available');
-    }
-
-    // Initialize speech recognition with continuous mode support
-    try {
-      await this.initializeSpeechRecognition();
-      logger.log('✅ Speech recognition initialized');
-    } catch (recognitionError) {
-      logger.warn('⚠️ Speech recognition failed:', recognitionError);
-    }
-
-    // Initialize audio context
-    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
-      try {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        logger.log('✅ Audio context initialized');
-      } catch (audioError) {
-        logger.warn('⚠️ Audio context initialization failed:', audioError);
-      }
-    }
-
-    // Initialize AWS Polly if credentials are available
-    await this.initializeAWSPolly();
-
-    // Load voices
-    try {
-      await this.loadVoicesWithTimeout(3000);
-      logger.log('✅ Voices loaded successfully');
-    } catch (voiceError) {
-      logger.warn('⚠️ Voice loading failed:', voiceError);
-    }
-
-    this.isInitialized = true;
-    logger.log('✅ Voice service initialized successfully');
-    return true;
-  }
-
-  // Initialize AWS Polly
-  async initializeAWSPolly() {
-    try {
-      // Check if AWS credentials are available
-      const accessKeyId = process.env.REACT_APP_AWS_ACCESS_KEY_ID;
-      const secretAccessKey = process.env.REACT_APP_AWS_SECRET_ACCESS_KEY;
-      const region = process.env.REACT_APP_AWS_REGION || 'us-east-1';
-
-      if (!accessKeyId || !secretAccessKey) {
-        logger.warn('⚠️ AWS credentials not found, Polly will not be available');
-        return false;
-      }
-
-      // Configure AWS
-      AWS.config.update({
-        accessKeyId,
-        secretAccessKey,
-        region
+      this.client = new OpenAI({
+        apiKey: process.env.REACT_APP_OPENAI_API_KEY,
+        dangerouslyAllowBrowser: true
       });
 
-      // Create Polly service object
-      this.polly = new AWS.Polly();
-
-      // Test Polly connection
-      try {
-        const voices = await this.polly.describeVoices({ LanguageCode: 'en-US' }).promise();
-        logger.log(`✅ AWS Polly initialized with ${voices.Voices.length} English voices`);
-        this.pollyEnabled = true;
-        return true;
-      } catch (testError) {
-        logger.error('❌ AWS Polly test failed:', testError);
-        this.pollyEnabled = false;
-        return false;
-      }
-
-    } catch (error) {
-      logger.error('❌ AWS Polly initialization failed:', error);
-      this.pollyEnabled = false;
-      return false;
-    }
-  }
-
-  // Initialize speech recognition with continuous mode
-  async initializeSpeechRecognition() {
-    if (typeof window === 'undefined') {
-      throw new Error('Window object not available');
-    }
-
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      throw new Error('Speech recognition not supported in this browser');
-    }
-
-    try {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      this.recognition = new SpeechRecognition();
-      
-      // Configure for natural conversation
-      this.recognition.continuous = true; // Enable continuous mode for interruptions
-      this.recognition.interimResults = true; // Get results while speaking
-      this.recognition.lang = 'en-US';
-      this.recognition.maxAlternatives = 1;
-
-      logger.log('✅ Speech recognition initialized with continuous mode');
-      return this.recognition;
-    } catch (error) {
-      logger.error('Speech recognition initialization failed:', error);
-      throw error;
-    }
-  }
-
-  // Start listening with interruption support
-  async startListening(options = {}) {
-    try {
-      if (!this.isInitialized) {
-        await this.initialize();
-      }
-
-      if (this.isListening) {
-        logger.log('Already listening');
-        return;
-      }
-
-      if (!this.recognition) {
-        throw new Error('Speech recognition not available');
-      }
-
-      // Request microphone permission if needed
-      if (!options.skipPermissionCheck) {
-        await this.requestMicrophonePermission();
-      }
-
-      // Resume audio context if suspended
-      if (this.audioContext && this.audioContext.state === 'suspended') {
-        try {
-          await this.audioContext.resume();
-        } catch (resumeError) {
-          logger.warn('Could not resume audio context:', resumeError);
-        }
-      }
-
-      this.isListening = true;
-      this.continuousMode = options.continuous || false;
-      
-      return new Promise((resolve, reject) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        let recognitionTimeout;
-
-        // Set up timeout
-        const resetTimeout = () => {
-          if (recognitionTimeout) clearTimeout(recognitionTimeout);
-          recognitionTimeout = setTimeout(() => {
-            if (!this.continuousMode) {
-              this.stopListening();
-              resolve({
-                transcript: finalTranscript.trim(),
-                confidence: 0.9,
-                isFinal: true,
-                timestamp: new Date().toISOString()
-              });
-            }
-          }, options.timeout || 3000); // 3 second timeout after last speech
-        };
-
-        this.recognition.onstart = () => {
-          logger.log('🎤 Speech recognition started');
-          resetTimeout();
-        };
-
-        this.recognition.onresult = (event) => {
-          interimTranscript = '';
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i];
-            const transcript = result[0].transcript;
-            
-            if (result.isFinal) {
-              finalTranscript += transcript + ' ';
-              
-              // Check for interruption during AI speech
-              if (this.isSpeaking && this.onInterruptCallback) {
-                logger.log('🛑 User interruption detected');
-                this.stopSpeaking();
-                this.onInterruptCallback(transcript);
-              }
-              
-              // Call the result callback if provided
-              if (options.onResult) {
-                options.onResult(transcript, result[0].confidence);
-              }
-            } else {
-              interimTranscript += transcript;
-              
-              // Provide interim results for real-time feedback
-              if (options.onInterim) {
-                options.onInterim(interimTranscript);
-              }
-            }
-          }
-          
-          resetTimeout();
-          
-          logger.log('📝 Speech recognized:', { 
-            final: finalTranscript.trim(), 
-            interim: interimTranscript 
-          });
-        };
-
-        this.recognition.onerror = (event) => {
-          logger.error('❌ Speech recognition error:', event.error);
-          this.isListening = false;
-          
-          if (event.error === 'no-speech') {
-            // No speech detected is not an error in continuous mode
-            if (!this.continuousMode) {
-              resolve({
-                transcript: finalTranscript.trim() || '',
-                confidence: 0,
-                isFinal: true,
-                timestamp: new Date().toISOString()
-              });
-            }
-          } else {
-            const errorMessages = {
-              'not-allowed': 'Microphone access denied',
-              'audio-capture': 'Microphone not available',
-              'network': 'Network error',
-              'aborted': 'Recognition cancelled'
-            };
-            const errorMessage = errorMessages[event.error] || `Recognition error: ${event.error}`;
-            reject(new Error(errorMessage));
-          }
-        };
-
-        this.recognition.onend = () => {
-          logger.log('🔚 Speech recognition ended');
-          this.isListening = false;
-          
-          if (!this.continuousMode || finalTranscript.trim()) {
-            resolve({
-              transcript: finalTranscript.trim(),
-              confidence: 0.9,
-              isFinal: true,
-              timestamp: new Date().toISOString()
-            });
-          }
-        };
-
-        // Start recognition
-        try {
-          this.recognition.start();
-        } catch (error) {
-          this.isListening = false;
-          reject(error);
-        }
-      });
-
-    } catch (error) {
-      this.isListening = false;
-      logger.error('❌ Error starting speech recognition:', error);
-      throw error;
-    }
-  }
-
-  // Stop listening
-  stopListening() {
-    if (this.recognition && this.isListening) {
-      try {
-        this.recognition.stop();
-      } catch (error) {
-        logger.warn('⚠️ Error stopping recognition:', error);
-      }
-    }
-    this.isListening = false;
-    this.continuousMode = false;
-  }
-
-  // Speak text using AWS Polly or browser fallback
-  async speakText(text, options = {}) {
-    try {
-      if (!text || typeof text !== 'string' || text.trim().length === 0) {
-        logger.warn('⚠️ Empty text provided to speakText');
-        return { success: false, error: 'Empty text' };
-      }
-
-      if (!this.isInitialized) {
-        await this.initialize();
-      }
-
-      logger.log('🗣️ Speaking text:', text);
-      
-      // Try AWS Polly first if enabled
-      if (this.pollyEnabled && this.polly) {
-        try {
-          return await this.speakWithPolly(text, options);
-        } catch (pollyError) {
-          logger.warn('⚠️ Polly synthesis failed, falling back to browser:', pollyError);
-        }
-      }
-      
-      // Fallback to browser synthesis
-      return await this.speakWithBrowser(text, options);
-
-    } catch (error) {
-      logger.error('❌ Speak text error:', error);
-      throw error;
-    }
-  }
-
-  // Speak using AWS Polly
-  async speakWithPolly(text, options = {}) {
-    if (!this.polly) {
-      throw new Error('AWS Polly not initialized');
-    }
-
-    return new Promise((resolve, reject) => {
-      const params = {
-        Text: text,
-        OutputFormat: 'mp3',
-        VoiceId: options.voiceId || this.preferredVoiceId,
-        Engine: 'neural', // Use neural voice for more natural speech
-        SampleRate: '24000',
-        TextType: 'text'
-      };
-
-      // Add SSML support if needed
-      if (text.includes('<speak>')) {
-        params.TextType = 'ssml';
-      }
-
-      this.polly.synthesizeSpeech(params, async (err, data) => {
-        if (err) {
-          logger.error('❌ Polly synthesis error:', err);
-          reject(err);
-          return;
-        }
-
-        try {
-          // Convert audio stream to blob
-          const audioBlob = new Blob([data.AudioStream], { type: 'audio/mpeg' });
-          const audioUrl = URL.createObjectURL(audioBlob);
-
-          // Play the audio
-          await this.playAudio(audioUrl, options);
-
-          // Clean up
-          URL.revokeObjectURL(audioUrl);
-
-          resolve({
-            success: true,
-            synthesisType: 'aws-polly',
-            voiceId: params.VoiceId
-          });
-
-        } catch (playError) {
-          logger.error('❌ Error playing Polly audio:', playError);
-          reject(playError);
-        }
-      });
-    });
-  }
-
-  // Play audio with interruption support
-  async playAudio(audioUrl, options = {}) {
-    return new Promise((resolve, reject) => {
-      const audio = new Audio(audioUrl);
-      
-      // Configure audio
-      audio.volume = options.volume || 0.8;
-      audio.playbackRate = options.rate || 1.0;
-
-      this.isSpeaking = true;
-      this.currentAudio = audio;
-
-      audio.onended = () => {
-        logger.log('✅ Audio playback completed');
-        this.isSpeaking = false;
-        this.currentAudio = null;
-        resolve();
-      };
-
-      audio.onerror = (error) => {
-        logger.error('❌ Audio playback error:', error);
-        this.isSpeaking = false;
-        this.currentAudio = null;
-        reject(error);
-      };
-
-      // Play the audio
-      audio.play().catch(reject);
-    });
-  }
-
-  // Browser synthesis fallback
-  async speakWithBrowser(text, options = {}) {
-    if (!this.synthesis) {
-      throw new Error('Browser speech synthesis not supported');
-    }
-
-    return new Promise((resolve, reject) => {
-      this.stopCurrentAudio();
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      
-      // Configure for natural speech
-      utterance.rate = options.rate || 0.9;
-      utterance.pitch = options.pitch || 1.0;
-      utterance.volume = options.volume || 0.8;
-      utterance.lang = 'en-US';
-
-      // Find best voice
-      const preferredVoice = this.voices.find(voice => 
-        voice.lang.includes('en-US') && voice.name.toLowerCase().includes('natural')
-      ) || this.voices.find(voice => 
-        voice.lang.includes('en-US')
-      ) || this.voices[0];
-      
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
-
-      this.currentUtterance = utterance;
-      this.isSpeaking = true;
-
-      const timeout = setTimeout(() => {
-        this.stopCurrentAudio();
-        reject(new Error('Speech synthesis timed out'));
-      }, 30000);
-
-      utterance.onstart = () => {
-        logger.log('🗣️ Browser synthesis started');
-      };
-
-      utterance.onend = () => {
-        clearTimeout(timeout);
-        logger.log('✅ Browser synthesis completed');
-        this.isSpeaking = false;
-        this.currentUtterance = null;
-        resolve({
-          success: true,
-          synthesisType: 'browser',
-          duration: this.estimateSpeechDuration(text)
-        });
-      };
-
-      utterance.onerror = (event) => {
-        clearTimeout(timeout);
-        logger.error('❌ Browser synthesis error:', event.error);
-        this.isSpeaking = false;
-        this.currentUtterance = null;
-        reject(new Error(`Browser synthesis error: ${event.error}`));
-      };
-
-      try {
-        this.synthesis.speak(utterance);
-      } catch (error) {
-        clearTimeout(timeout);
-        this.isSpeaking = false;
-        this.currentUtterance = null;
-        reject(error);
-      }
-    });
-  }
-
-  // Stop current audio/speech
-  stopCurrentAudio() {
-    // Stop Polly audio if playing
-    if (this.currentAudio) {
-      try {
-        this.currentAudio.pause();
-        this.currentAudio = null;
-      } catch (error) {
-        logger.warn('Error stopping audio:', error);
-      }
-    }
-
-    // Stop browser synthesis
-    if (this.synthesis && this.synthesis.speaking) {
-      try {
-        this.synthesis.cancel();
-      } catch (error) {
-        logger.warn('Error cancelling synthesis:', error);
-      }
-    }
-
-    if (this.currentUtterance) {
-      this.currentUtterance = null;
-    }
-
-    this.isSpeaking = false;
-  }
-
-  // Stop speaking (alias for stopCurrentAudio)
-  stopSpeaking() {
-    this.stopCurrentAudio();
-  }
-
-  // Set interruption callback
-  setInterruptCallback(callback) {
-    this.onInterruptCallback = callback;
-  }
-
-  // Request microphone permission
-  async requestMicrophonePermission() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      
-      stream.getTracks().forEach(track => track.stop());
-      logger.log('✅ Microphone permission granted');
+      this.isInitialized = true;
+      logger.log('✅ OpenAI service initialized successfully');
       return true;
 
     } catch (error) {
-      logger.error('❌ Microphone permission denied:', error);
-      throw new Error('Microphone access is required for voice training');
-    }
-  }
-
-  // Load available voices
-  async loadVoicesWithTimeout(timeoutMs = 3000) {
-    return new Promise((resolve) => {
-      if (!this.synthesis) {
-        resolve();
-        return;
-      }
-
-      let attempts = 0;
-      const maxAttempts = 5;
-      let timeoutId;
-
-      timeoutId = setTimeout(() => {
-        logger.warn('Voice loading timed out');
-        resolve();
-      }, timeoutMs);
-
-      const loadVoicesHelper = () => {
-        attempts++;
-        this.voices = this.synthesis.getVoices() || [];
-        
-        if (this.voices.length > 0) {
-          logger.log(`✅ Loaded ${this.voices.length} voices`);
-          clearTimeout(timeoutId);
-          resolve();
-        } else if (attempts < maxAttempts) {
-          setTimeout(loadVoicesHelper, 200);
-        } else {
-          logger.warn('Could not load voices after max attempts');
-          clearTimeout(timeoutId);
-          resolve();
-        }
-      };
-
-      if (this.synthesis.onvoiceschanged !== undefined) {
-        this.synthesis.onvoiceschanged = () => {
-          clearTimeout(timeoutId);
-          loadVoicesHelper();
-        };
-      }
-      
-      loadVoicesHelper();
-    });
-  }
-
-  // Estimate speech duration
-  estimateSpeechDuration(text) {
-    if (!text || typeof text !== 'string') return 0;
-    const words = text.split(/\s+/).filter(word => word.length > 0).length;
-    const wordsPerSecond = 150 / 60; // ~2.5 words per second
-    return Math.ceil(words / wordsPerSecond);
-  }
-
-  // Check browser compatibility
-  checkCompatibility() {
-    if (typeof window === 'undefined') {
-      return {
-        compatible: false,
-        issues: ['Window object not available'],
-        features: {}
-      };
-    }
-
-    const compatibility = {
-      speechRecognition: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
-      speechSynthesis: 'speechSynthesis' in window,
-      mediaDevices: typeof navigator !== 'undefined' && 'mediaDevices' in navigator,
-      audioContext: 'AudioContext' in window || 'webkitAudioContext' in window,
-      promises: 'Promise' in window
-    };
-
-    const issues = [];
-    if (!compatibility.speechRecognition) issues.push('Speech recognition not supported');
-    if (!compatibility.speechSynthesis) issues.push('Speech synthesis not supported');
-    if (!compatibility.mediaDevices) issues.push('Media devices not supported');
-
-    return {
-      compatible: issues.length === 0,
-      issues,
-      features: compatibility
-    };
-  }
-
-  // Clean up resources
-  cleanup() {
-    logger.log('🧹 Cleaning up voice service...');
-    
-    this.stopListening();
-    this.stopCurrentAudio();
-    
-    if (this.recognition) {
-      this.recognition = null;
-    }
-
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      try {
-        this.audioContext.close();
-      } catch (error) {
-        logger.warn('Error closing audio context:', error);
-      }
-    }
-
-    this.isInitialized = false;
-    this.initializationPromise = null;
-  }
-
-  // Get current state
-  getState() {
-    return {
-      isListening: this.isListening || false,
-      isSpeaking: this.isSpeaking || false,
-      isInitialized: this.isInitialized || false,
-      hasAudioContext: !!this.audioContext,
-      pollyEnabled: this.pollyEnabled || false
-    };
-  }
-
-  // Test speech
-  async testSpeech(text = "Hello, this is a test of the speech synthesis system.") {
-    try {
-      logger.log('🧪 Testing speech synthesis...');
-      const result = await this.speakText(text);
-      logger.log('✅ Speech test successful:', result);
-      return result;
-    } catch (error) {
-      logger.error('❌ Speech test failed:', error);
+      logger.error('❌ OpenAI service initialization failed:', error);
       throw error;
+    }
+  }
+
+  // Main method to get AI prospect response following roleplay flow
+  async getProspectResponse(userInput, context, stage = null) {
+    try {
+      // Use provided stage or current stage
+      const currentStage = stage || this.currentStage;
+      logger.log('🤖 AI Processing:', { userInput, stage: currentStage, context: context.roleplayType });
+      
+      // Handle silence detection
+      if (!userInput && this.silenceStartTime) {
+        const silenceDuration = Date.now() - this.silenceStartTime;
+        if (silenceDuration >= 10000 && silenceDuration < 15000) {
+          return {
+            success: true,
+            response: this.getImpatiencePhrase(),
+            stage: currentStage,
+            nextStage: currentStage,
+            shouldHangUp: false
+          };
+        } else if (silenceDuration >= 15000) {
+          return {
+            success: true,
+            response: "I am afraid I have to go.",
+            stage: currentStage,
+            nextStage: ROLEPLAY_STAGES.HANG_UP,
+            shouldHangUp: true
+          };
+        }
+      }
+
+      // Reset silence timer on user input
+      if (userInput) {
+        this.silenceStartTime = null;
+        this.lastUserInput = userInput;
+      }
+
+      // Route to appropriate handler based on stage
+      let result;
+      switch (currentStage) {
+        case ROLEPLAY_STAGES.GREETING:
+          result = await this.handleGreetingStage();
+          break;
+        case ROLEPLAY_STAGES.OPENER:
+          result = await this.handleOpenerStage(userInput, context);
+          break;
+        case ROLEPLAY_STAGES.EARLY_OBJECTION:
+          result = await this.handleObjectionStage(userInput, context);
+          break;
+        case ROLEPLAY_STAGES.MINI_PITCH:
+          result = await this.handleMiniPitchStage(userInput, context);
+          break;
+        case ROLEPLAY_STAGES.POST_PITCH:
+          result = await this.handlePostPitchStage(userInput, context);
+          break;
+        case ROLEPLAY_STAGES.QUALIFICATION:
+          result = await this.handleQualificationStage(userInput, context);
+          break;
+        case ROLEPLAY_STAGES.MEETING_ASK:
+          result = await this.handleMeetingAskStage(userInput, context);
+          break;
+        default:
+          result = await this.handleDefaultStage(userInput, context);
+      }
+
+      // Update conversation history
+      if (userInput) {
+        this.conversationHistory.push(
+          { role: 'user', content: userInput },
+          { role: 'assistant', content: result.response }
+        );
+      }
+
+      // Update current stage
+      if (result.nextStage) {
+        this.currentStage = result.nextStage;
+      }
+
+      return result;
+
+    } catch (error) {
+      logger.error('❌ OpenAI API error:', error);
+      return {
+        success: false,
+        error: error.message,
+        response: this.getFallbackResponse(this.currentStage),
+        evaluation: { passed: false, feedback: 'Technical error occurred' }
+      };
+    }
+  }
+
+  // Handle greeting stage (initial "Hello")
+  async handleGreetingStage() {
+    logger.log('🎯 Handling greeting stage');
+    this.currentStage = ROLEPLAY_STAGES.OPENER;
+    return {
+      success: true,
+      response: "Hello?",
+      stage: ROLEPLAY_STAGES.GREETING,
+      nextStage: ROLEPLAY_STAGES.OPENER,
+      shouldHangUp: false
+    };
+  }
+
+  // Handle opener stage with evaluation
+  async handleOpenerStage(userInput, context) {
+    logger.log('🎯 Handling opener stage');
+    
+    if (!userInput) {
+      return {
+        success: true,
+        response: "Hello? Anyone there?",
+        stage: ROLEPLAY_STAGES.OPENER,
+        nextStage: ROLEPLAY_STAGES.OPENER,
+        shouldHangUp: false
+      };
+    }
+
+    // Evaluate opener
+    const evaluation = this.evaluateWithRubric(userInput, RUBRICS.OPENER);
+    logger.log('📊 Opener evaluation:', evaluation);
+
+    if (!evaluation.passed) {
+      // Failed opener - hang up
+      return {
+        success: true,
+        response: "Sorry, I don't have time for this. *click*",
+        evaluation,
+        stage: ROLEPLAY_STAGES.OPENER,
+        nextStage: ROLEPLAY_STAGES.HANG_UP,
+        shouldHangUp: true
+      };
+    }
+
+    // Passed opener - check for random hang-up (20-30% chance)
+    if (context.mode === 'practice' && Math.random() < 0.25) {
+      logger.log('🎲 Random hang-up triggered');
+      return {
+        success: true,
+        response: "Sorry, got to run. *click*",
+        evaluation,
+        stage: ROLEPLAY_STAGES.OPENER,
+        nextStage: ROLEPLAY_STAGES.HANG_UP,
+        shouldHangUp: true
+      };
+    }
+
+    // Move to objection stage
+    const objection = this.getRandomObjection('early');
+    return {
+      success: true,
+      response: objection,
+      evaluation,
+      stage: ROLEPLAY_STAGES.OPENER,
+      nextStage: ROLEPLAY_STAGES.EARLY_OBJECTION,
+      shouldHangUp: false
+    };
+  }
+
+  // Handle objection stage
+  async handleObjectionStage(userInput, context) {
+    logger.log('🎯 Handling objection stage');
+    
+    if (!userInput) {
+      return {
+        success: true,
+        response: "Well? I asked you a question.",
+        stage: ROLEPLAY_STAGES.EARLY_OBJECTION,
+        nextStage: ROLEPLAY_STAGES.EARLY_OBJECTION,
+        shouldHangUp: false
+      };
+    }
+
+    // Evaluate objection handling
+    const evaluation = this.evaluateWithRubric(userInput, RUBRICS.OBJECTION_HANDLING);
+    logger.log('📊 Objection handling evaluation:', evaluation);
+
+    if (!evaluation.passed) {
+      // Failed objection handling
+      return {
+        success: true,
+        response: "Look, I really don't have time for this. Goodbye. *click*",
+        evaluation,
+        stage: ROLEPLAY_STAGES.EARLY_OBJECTION,
+        nextStage: ROLEPLAY_STAGES.HANG_UP,
+        shouldHangUp: true
+      };
+    }
+
+    // Passed - move to mini pitch stage
+    const prompts = [
+      "Alright, I'm listening. What is it?",
+      "You've got 30 seconds.",
+      "Okay, tell me more.",
+      "Go ahead, what's this about?",
+      "I'm listening."
+    ];
+    
+    return {
+      success: true,
+      response: prompts[Math.floor(Math.random() * prompts.length)],
+      evaluation,
+      stage: ROLEPLAY_STAGES.EARLY_OBJECTION,
+      nextStage: ROLEPLAY_STAGES.MINI_PITCH,
+      shouldHangUp: false
+    };
+  }
+
+  // Handle mini pitch stage
+  async handleMiniPitchStage(userInput, context) {
+    logger.log('🎯 Handling mini pitch stage');
+    
+    if (!userInput) {
+      return {
+        success: true,
+        response: "Are you still there? What were you going to tell me?",
+        stage: ROLEPLAY_STAGES.MINI_PITCH,
+        nextStage: ROLEPLAY_STAGES.MINI_PITCH,
+        shouldHangUp: false
+      };
+    }
+
+    // Evaluate mini pitch
+    const pitchEval = this.evaluateWithRubric(userInput, RUBRICS.MINI_PITCH);
+    
+    // Also check if they asked a discovery question
+    const painEval = this.evaluateWithRubric(userInput, RUBRICS.UNCOVERING_PAIN);
+    
+    const evaluation = {
+      passed: pitchEval.passed && painEval.passed,
+      feedback: pitchEval.passed && painEval.passed ? 
+        "Good pitch and great discovery question!" : 
+        (!pitchEval.passed ? pitchEval.feedback : painEval.feedback),
+      scores: { ...pitchEval.scores, ...painEval.scores },
+      overall_score: (pitchEval.overall_score + painEval.overall_score) / 2
+    };
+
+    logger.log('📊 Mini pitch evaluation:', evaluation);
+
+    if (!evaluation.passed) {
+      // Failed mini pitch
+      return {
+        success: true,
+        response: "Hmm, I don't think we need that. Thanks anyway. *click*",
+        evaluation,
+        stage: ROLEPLAY_STAGES.MINI_PITCH,
+        nextStage: ROLEPLAY_STAGES.HANG_UP,
+        shouldHangUp: true
+      };
+    }
+
+    // Passed - for practice mode, end positively
+    if (context.roleplayType === 'opener_practice') {
+      return {
+        success: true,
+        response: "That's interesting. Let me think about it and get back to you. Have a good day!",
+        evaluation,
+        stage: ROLEPLAY_STAGES.MINI_PITCH,
+        nextStage: ROLEPLAY_STAGES.HANG_UP,
+        shouldHangUp: true
+      };
+    }
+
+    // For other modes, continue to post-pitch
+    return {
+      success: true,
+      response: "Tell me more about how this works.",
+      evaluation,
+      stage: ROLEPLAY_STAGES.MINI_PITCH,
+      nextStage: ROLEPLAY_STAGES.POST_PITCH,
+      shouldHangUp: false
+    };
+  }
+
+  // Evaluate user input against a rubric
+  evaluateWithRubric(userInput, rubric) {
+    const scores = {};
+    let passedCriteria = 0;
+
+    // Check each criterion
+    for (const criterion of rubric.criteria) {
+      const passed = criterion.check(userInput);
+      scores[criterion.id] = passed;
+      if (passed) passedCriteria++;
+    }
+
+    const passed = passedCriteria >= rubric.passThreshold;
+    const overall_score = (passedCriteria / rubric.maxScore) * 4;
+
+    // Generate feedback
+    let feedback = "";
+    if (passed) {
+      feedback = `Good ${rubric.name.toLowerCase()}! You met ${passedCriteria} out of ${rubric.maxScore} criteria.`;
+    } else {
+      feedback = `Keep practicing your ${rubric.name.toLowerCase()}. You only met ${passedCriteria} out of ${rubric.maxScore} criteria.`;
+    }
+
+    return {
+      passed,
+      feedback,
+      scores,
+      overall_score,
+      criteria_met: passedCriteria,
+      criteria_total: rubric.maxScore
+    };
+  }
+
+  // Get random objection
+  getRandomObjection(type) {
+    const objections = type === 'early' ? EARLY_OBJECTIONS : POST_PITCH_OBJECTIONS;
+    const available = objections.filter(obj => !this.usedObjections.has(obj));
+    
+    if (available.length === 0) {
+      this.usedObjections.clear();
+      logger.log('🔄 Reset objection list - all were used');
+    }
+    
+    const finalList = available.length > 0 ? available : objections;
+    const selected = finalList[Math.floor(Math.random() * finalList.length)];
+    this.usedObjections.add(selected);
+    this.sessionData.lastObjection = selected;
+    
+    logger.log('🎭 Selected objection:', selected);
+    return selected;
+  }
+
+  // Get impatience phrase for silence
+  getImpatiencePhrase() {
+    return IMPATIENCE_PHRASES[Math.floor(Math.random() * IMPATIENCE_PHRASES.length)];
+  }
+
+  // Fallback responses when API fails
+  getFallbackResponse(stage) {
+    const fallbacks = {
+      [ROLEPLAY_STAGES.GREETING]: "Hello?",
+      [ROLEPLAY_STAGES.OPENER]: "Yes?",
+      [ROLEPLAY_STAGES.EARLY_OBJECTION]: "What's this about?",
+      [ROLEPLAY_STAGES.MINI_PITCH]: "Alright, I'm listening.",
+      [ROLEPLAY_STAGES.POST_PITCH]: "How do I know this will work for us?",
+      [ROLEPLAY_STAGES.QUALIFICATION]: "Tell me more about the implementation.",
+      [ROLEPLAY_STAGES.MEETING_ASK]: "I'm pretty busy next week.",
+      [ROLEPLAY_STAGES.HANG_UP]: "Alright, thanks for calling."
+    };
+    
+    return fallbacks[stage] || "I'm sorry, what was that?";
+  }
+
+  // Start silence timer
+  startSilenceTimer() {
+    this.silenceStartTime = Date.now();
+    logger.log('⏱️ Silence timer started');
+  }
+
+  // Reset conversation for new session
+  resetConversation() {
+    this.conversationHistory = [];
+    this.currentStage = ROLEPLAY_STAGES.GREETING;
+    this.usedObjections.clear();
+    this.sessionData = {};
+    this.silenceStartTime = null;
+    this.lastUserInput = null;
+    logger.log('🔄 OpenAI conversation reset');
+  }
+
+  // Handle default/unknown stages
+  async handleDefaultStage(userInput, context) {
+    return {
+      success: true,
+      response: "I'm not sure what you mean. Can you clarify?",
+      stage: this.currentStage,
+      nextStage: this.currentStage,
+      shouldHangUp: false
+    };
+  }
+
+  // Generate coaching feedback
+  async generateCoachingFeedback(sessionData) {
+    try {
+      const evaluations = sessionData.evaluations || [];
+      const feedback = {
+        sales: "",
+        grammar: "",
+        vocabulary: "",
+        pronunciation: "",
+        overall: ""
+      };
+
+      // Analyze performance
+      const totalScore = evaluations.reduce((sum, e) => sum + (e.overall_score || 0), 0);
+      const avgScore = evaluations.length > 0 ? totalScore / evaluations.length : 0;
+
+      // Generate feedback based on performance
+      if (avgScore >= 3.5) {
+        feedback.sales = "Excellent cold calling technique! Keep it up!";
+        feedback.overall = "Outstanding performance! You're mastering cold calling.";
+      } else if (avgScore >= 2.5) {
+        feedback.sales = "Good effort! Focus on being more conversational.";
+        feedback.overall = "You're improving! Keep practicing to build confidence.";
+      } else {
+        feedback.sales = "Keep practicing! Remember to sound natural and empathetic.";
+        feedback.overall = "Don't give up! Every call makes you better.";
+      }
+
+      feedback.grammar = "Your English grammar is clear - well done!";
+      feedback.vocabulary = "Good word choices - keep it simple and clear.";
+      feedback.pronunciation = "Speaking clearly - great job!";
+
+      return feedback;
+
+    } catch (error) {
+      logger.error('❌ Coaching feedback error:', error);
+      
+      return {
+        sales: "Great job practicing! Keep building confidence with each call.",
+        grammar: "Your communication is clear - keep it up!",
+        vocabulary: "Use simple, conversational words to connect better.",
+        pronunciation: "Speak clearly and at a good pace - you're doing well!",
+        overall: "You're improving with each practice session. Keep going!"
+      };
     }
   }
 }
 
-// Create and export singleton instance
-export const voiceService = new VoiceService();
+// Export singleton instance
+export const openAIService = new OpenAIService();
+export default openAIService;
