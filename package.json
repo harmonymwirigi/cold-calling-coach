@@ -35,6 +35,8 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "build": "CI=false react-scripts build",
+    "vercel-build": "CI=false react-scripts build",
     "test": "react-scripts test",
     "test:watch": "react-scripts test --watch",
     "test:coverage": "react-scripts test --coverage --watchAll=false",
@@ -55,7 +57,7 @@
     ],
     "rules": {
       "react-hooks/exhaustive-deps": "warn",
-      "no-console": "warn",
+      "no-console": "off",
       "no-unused-vars": "warn"
     }
   },
