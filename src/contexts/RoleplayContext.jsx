@@ -1,384 +1,322 @@
-// src/contexts/RoleplayContext.jsx
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+// src/contexts/RoleplayContext.jsx - ENHANCED VERSION
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { useAuth } from './AuthContext';
 import { openAIService } from '../services/openaiService';
-import { voiceService } from '../services/voiceService';
+import { supabase } from '../services/supabase';
 import logger from '../utils/logger';
 
-const RoleplayContext = createContext();
+const RoleplayContext = createContext({});
+
+export const useRoleplay = () => {
+  const context = useContext(RoleplayContext);
+  if (!context) {
+    throw new Error('useRoleplay must be used within RoleplayProvider');
+  }
+  return context;
+};
 
 export const RoleplayProvider = ({ children }) => {
+  const { userProfile } = useAuth();
+  
+  // Session state
   const [currentSession, setCurrentSession] = useState(null);
   const [callState, setCallState] = useState('idle'); // idle, dialing, connected, ended
   const [sessionResults, setSessionResults] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [lastSpeechTime, setLastSpeechTime] = useState(0);
-  const [voiceError, setVoiceError] = useState(null);
-  const silenceTimerRef = useRef(null);
-  const initializationRef = useRef(false);
-
-  // Safely initialize voice service
-  const initializeVoiceService = useCallback(async () => {
-    if (initializationRef.current) return true;
-    
+  
+  // Session tracking
+  const sessionRef = useRef(null);
+  const conversationRef = useRef([]);
+  const evaluationsRef = useRef([]);
+  const startTimeRef = useRef(null);
+  
+  // Start a new roleplay session
+  const startRoleplaySession = useCallback(async (roleplayType, mode, metadata = {}) => {
     try {
-      logger.log('🎤 Initializing voice service from context...');
+      logger.log('🎬 Starting roleplay session:', { roleplayType, mode, metadata });
       
-      // Check if voiceService exists and has initialize method
-      if (!voiceService || typeof voiceService.initialize !== 'function') {
-        throw new Error('Voice service not available');
-      }
-
-      await voiceService.initialize();
-      initializationRef.current = true;
-      setVoiceError(null);
-      logger.log('✅ Voice service initialized successfully');
-      return true;
-    } catch (error) {
-      logger.error('❌ Voice service initialization failed:', error);
-      setVoiceError(error.message);
-      return false;
-    }
-  }, []);
-
-  // Define endSession first since it's used by other functions
-  const endSession = useCallback(async (reason = 'completed') => {
-    if (!currentSession) return null;
-
-    try {
-      logger.log('🏁 Ending session:', reason);
-      
-      setCallState('ended');
-      
-      // Calculate session results
-      const evaluations = currentSession.evaluations.filter(e => e);
-      const passedEvaluations = evaluations.filter(e => e.passed);
-      const averageScore = evaluations.length > 0 
-        ? evaluations.reduce((sum, e) => sum + (e.overall_score || 0), 0) / evaluations.length 
-        : 0;
-
-      const sessionResult = {
-        sessionId: currentSession.id,
-        roleplayType: currentSession.roleplayType,
-        mode: currentSession.mode,
-        duration: Math.floor((new Date() - new Date(currentSession.startTime)) / 1000),
-        reason,
-        passed: passedEvaluations.length > 0 && reason !== 'silence_timeout',
-        evaluations: evaluations,
-        averageScore: averageScore,
-        conversationHistory: currentSession.conversationHistory,
-        endTime: new Date().toISOString()
-      };
-
-      // Generate coaching feedback
-      if (evaluations.length > 0) {
-        try {
-          sessionResult.coaching = await openAIService.generateCoachingFeedback({
-            roleplayType: currentSession.roleplayType,
-            callsAttempted: 1,
-            callsPassed: sessionResult.passed ? 1 : 0,
-            averageScore: averageScore,
-            commonIssues: evaluations.flatMap(e => e.issues || [])
-          });
-        } catch (coachingError) {
-          logger.error('Failed to generate coaching feedback:', coachingError);
-          // Continue without coaching feedback
-        }
-      }
-
-      setSessionResults(sessionResult);
-      logger.log('✅ Session ended successfully:', sessionResult);
-      
-      return sessionResult;
-    } catch (error) {
-      logger.error('❌ Error ending session:', error);
-      return null;
-    }
-  }, [currentSession]);
-
-  // Handle silence warning with voice service safety checks
-  const handleSilenceWarning = useCallback((silenceSeconds) => {
-    logger.log('Silence warning:', silenceSeconds);
-    // Add any warning UI or sound here if needed
-  }, []);
-
-  // Handle silence timeout with voice service safety checks
-  const handleSilenceTimeout = useCallback(async (reason) => {
-    try {
-      setIsProcessing(true);
-      await endSession(reason);
-      logger.log('Call ended due to silence:', reason);
-    } catch (error) {
-      logger.error('Error handling silence timeout:', error);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [endSession]);
-
-  // Set up voice service callbacks with safety checks
-  useEffect(() => {
-    const setupVoiceCallbacks = async () => {
-      try {
-        // Check if voice service is available and initialized
-        if (voiceService && typeof voiceService.setSilenceCallbacks === 'function') {
-          voiceService.setSilenceCallbacks(
-            handleSilenceWarning,
-            handleSilenceTimeout
-          );
-        }
-      } catch (error) {
-        logger.error('Error setting up voice callbacks:', error);
-      }
-    };
-
-    setupVoiceCallbacks();
-  }, [handleSilenceWarning, handleSilenceTimeout]);
-
-  // Local silence timer as backup
-  useEffect(() => {
-    if (isListening) {
-      silenceTimerRef.current = setInterval(() => {
-        const silenceSeconds = Math.floor((Date.now() - lastSpeechTime) / 1000);
-        if (silenceSeconds === 10) {
-          handleSilenceWarning(silenceSeconds);
-        } else if (silenceSeconds >= 15) {
-          handleSilenceTimeout('silence_timeout');
-        }
-      }, 1000);
-    }
-    return () => {
-      if (silenceTimerRef.current) {
-        clearInterval(silenceTimerRef.current);
-      }
-    };
-  }, [isListening, lastSpeechTime, handleSilenceWarning, handleSilenceTimeout]);
-
-  const startRoleplaySession = useCallback(async (roleplayType, mode, options = {}) => {
-    try {
-      logger.log('🚀 Starting roleplay session:', { roleplayType, mode, options });
-      
-      // Reset services
-      if (openAIService && typeof openAIService.resetConversation === 'function') {
-        openAIService.resetConversation();
+      // Initialize OpenAI service if needed
+      if (!openAIService.isInitialized) {
+        await openAIService.initialize();
       }
       
-      // Safely cleanup voice service
-      if (voiceService && typeof voiceService.cleanup === 'function') {
-        voiceService.cleanup();
-      }
-
-      // Create session data
-      const sessionData = {
-        id: Date.now().toString(),
+      // Reset OpenAI conversation
+      openAIService.resetConversation();
+      
+      // Create session object
+      const session = {
+        id: `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        userId: userProfile?.id,
         roleplayType,
         mode,
-        character: options.character,
+        metadata,
         startTime: new Date().toISOString(),
-        callsAttempted: 0,
-        callsPassed: 0,
-        currentStage: 'greeting',
-        conversationHistory: [],
-        evaluations: [],
-        usedObjections: new Set(),
-        ...options
+        character: metadata.character || null,
+        status: 'active'
       };
-
-      setCurrentSession(sessionData);
+      
+      sessionRef.current = session;
+      conversationRef.current = [];
+      evaluationsRef.current = [];
+      startTimeRef.current = Date.now();
+      
+      setCurrentSession(session);
       setCallState('dialing');
-
-      // Simulate dialing delay then connect
-      setTimeout(async () => {
+      setSessionResults(null);
+      
+      // Simulate dialing delay
+      setTimeout(() => {
         setCallState('connected');
-        
-        // Start with prospect greeting
-        const greeting = "Hello?";
-        logger.log('🎭 AI will now speak the greeting:', greeting);
-        
-        try {
-          // Initialize voice service before speaking
-          const voiceInitialized = await initializeVoiceService();
-          
-          if (voiceInitialized && voiceService && typeof voiceService.speakText === 'function') {
-            logger.log('🔊 Attempting to speak greeting...');
-            await voiceService.speakText(greeting, {
-              voiceId: 'Joanna',
-              rate: 0.9,
-              pitch: 1.0
-            });
-            logger.log('✅ Greeting spoken successfully');
-          } else {
-            logger.warn('⚠️ Voice service not available, skipping greeting speech');
-          }
-        } catch (error) {
-          logger.error('❌ Error speaking greeting:', error);
-          setVoiceError('Voice service error: ' + error.message);
-        }
-        
-        logger.log('✅ Roleplay session started successfully');
+        logger.log('📞 Call connected');
       }, 2000);
-
-      return sessionData;
+      
+      // Log session start in database
+      if (userProfile?.id) {
+        try {
+          await supabase
+            .from('session_logs')
+            .insert({
+              user_id: userProfile.id,
+              roleplay_type: roleplayType,
+              mode: mode,
+              started_at: session.startTime,
+              metadata: metadata
+            });
+        } catch (dbError) {
+          logger.warn('Failed to log session start:', dbError);
+        }
+      }
+      
+      return session;
+      
     } catch (error) {
       logger.error('❌ Error starting roleplay session:', error);
       throw error;
     }
-  }, [initializeVoiceService]);
-
-  const handleUserResponse = useCallback(async (response) => {
+  }, [userProfile]);
+  
+  // Handle user response during session
+  const handleUserResponse = useCallback(async (userInput) => {
+    if (!currentSession || callState !== 'connected') {
+      logger.warn('Cannot handle response - no active session');
+      return { success: false, error: 'No active session' };
+    }
+    
     try {
       setIsProcessing(true);
       
-      // Check if openAI service is available
-      if (!openAIService || typeof openAIService.getProspectResponse !== 'function') {
-        throw new Error('OpenAI service not available');
+      // Get current conversation stage
+      const conversationLength = conversationRef.current.length;
+      const currentStage = conversationLength === 0 ? 'opener' : null;
+      
+      // Process with OpenAI
+      const aiResult = await openAIService.getProspectResponse(
+        userInput,
+        {
+          roleplayType: currentSession.roleplayType,
+          mode: currentSession.mode,
+          character: currentSession.metadata.character
+        },
+        currentStage
+      );
+      
+      if (!aiResult.success) {
+        throw new Error(aiResult.error || 'AI processing failed');
       }
       
-      const result = await openAIService.getProspectResponse(response, {
-        roleplayType: currentSession?.roleplayType,
-        mode: currentSession?.mode
+      // Track conversation
+      conversationRef.current.push({
+        speaker: 'user',
+        text: userInput,
+        timestamp: Date.now()
       });
-      return result;
+      
+      conversationRef.current.push({
+        speaker: 'ai',
+        text: aiResult.response,
+        timestamp: Date.now()
+      });
+      
+      // Track evaluation if provided
+      if (aiResult.evaluation) {
+        evaluationsRef.current.push({
+          stage: aiResult.stage,
+          evaluation: aiResult.evaluation,
+          timestamp: Date.now()
+        });
+      }
+      
+      // Check if call should end
+      if (aiResult.shouldHangUp || aiResult.nextStage === 'hang_up') {
+        logger.log('📞 AI decided to hang up');
+        // Don't immediately end - let the UI handle it after speaking
+      }
+      
+      return {
+        success: true,
+        response: aiResult.response,
+        evaluation: aiResult.evaluation,
+        stage: aiResult.stage,
+        nextStage: aiResult.nextStage,
+        shouldHangUp: aiResult.shouldHangUp
+      };
+      
     } catch (error) {
-      logger.error('Error processing user response:', error);
-      throw error;
+      logger.error('❌ Error handling user response:', error);
+      return {
+        success: false,
+        error: error.message,
+        response: "I'm sorry, could you repeat that?"
+      };
     } finally {
       setIsProcessing(false);
     }
-  }, [currentSession]);
-
-  const handleProspectResponse = useCallback(async (response) => {
-    if (!currentSession) return;
-
+  }, [currentSession, callState]);
+  
+  // End the current session
+  const endSession = useCallback(async (reason = 'completed') => {
+    if (!currentSession) {
+      logger.warn('No session to end');
+      return null;
+    }
+    
     try {
-      logger.log('🎭 Prospect speaking:', response);
+      logger.log('🏁 Ending session:', reason);
       
-      // Speak the prospect's response with error handling
-      let speechResult = null;
-      try {
-        const voiceInitialized = await initializeVoiceService();
-        
-        if (voiceInitialized && voiceService && typeof voiceService.speakText === 'function') {
-          logger.log('🔊 Attempting to speak with voice service...');
-          speechResult = await voiceService.speakText(response, {
-            voiceId: 'Joanna', // Female US voice
-            rate: 0.9,
-            pitch: 1.0
-          });
-          logger.log('✅ Speech completed:', speechResult);
-        } else {
-          logger.warn('⚠️ Voice service not available for prospect response');
-          speechResult = { success: false, error: 'Voice service not available' };
+      const endTime = Date.now();
+      const duration = Math.floor((endTime - startTimeRef.current) / 1000);
+      
+      // Calculate results
+      const totalEvaluations = evaluationsRef.current.length;
+      const passedEvaluations = evaluationsRef.current.filter(e => e.evaluation?.passed).length;
+      const overallPassed = passedEvaluations >= Math.ceil(totalEvaluations * 0.6); // 60% pass rate
+      
+      // Get coaching feedback
+      const coachingFeedback = await openAIService.generateCoachingFeedback({
+        roleplayType: currentSession.roleplayType,
+        mode: currentSession.mode,
+        evaluations: evaluationsRef.current,
+        conversation: conversationRef.current,
+        duration,
+        passed: overallPassed
+      });
+      
+      const results = {
+        sessionId: currentSession.id,
+        roleplayType: currentSession.roleplayType,
+        mode: currentSession.mode,
+        duration,
+        reason,
+        passed: overallPassed,
+        evaluations: evaluationsRef.current,
+        conversation: conversationRef.current,
+        coaching: coachingFeedback,
+        metrics: {
+          totalStages: totalEvaluations,
+          passedStages: passedEvaluations,
+          passRate: totalEvaluations > 0 ? (passedEvaluations / totalEvaluations) : 0
         }
-      } catch (speechError) {
-        logger.error('❌ Error speaking prospect response:', speechError);
-        setVoiceError('Speech error: ' + speechError.message);
-        speechResult = { success: false, error: speechError.message };
+      };
+      
+      // Update session state
+      setCallState('ended');
+      setSessionResults(results);
+      
+      // Log session end in database
+      if (userProfile?.id) {
+        try {
+          await supabase
+            .from('session_logs')
+            .insert({
+              user_id: userProfile.id,
+              session_id: currentSession.id,
+              roleplay_type: currentSession.roleplayType,
+              mode: currentSession.mode,
+              started_at: currentSession.startTime,
+              ended_at: new Date().toISOString(),
+              duration,
+              passed: overallPassed,
+              reason,
+              metrics: results.metrics,
+              evaluations: evaluationsRef.current
+            });
+        } catch (dbError) {
+          logger.warn('Failed to log session end:', dbError);
+        }
       }
       
-      // Update conversation history regardless of speech success
-      setCurrentSession(prev => ({
-        ...prev,
-        conversationHistory: [
-          ...prev.conversationHistory,
-          { role: 'prospect', content: response }
-        ]
-      }));
+      return results;
       
-      return speechResult;
     } catch (error) {
-      logger.error('❌ Error handling prospect response:', error);
-      throw error;
+      logger.error('❌ Error ending session:', error);
+      return null;
     }
-  }, [currentSession, initializeVoiceService]);
-
+  }, [currentSession, userProfile]);
+  
+  // Reset session
   const resetSession = useCallback(() => {
+    logger.log('🔄 Resetting session');
     setCurrentSession(null);
     setCallState('idle');
     setSessionResults(null);
     setIsProcessing(false);
-    setVoiceError(null);
-    
-    // Safely reset services
-    if (openAIService && typeof openAIService.resetConversation === 'function') {
-      openAIService.resetConversation();
-    }
-    
-    if (voiceService && typeof voiceService.cleanup === 'function') {
-      voiceService.cleanup();
-    }
-    
-    initializationRef.current = false;
+    sessionRef.current = null;
+    conversationRef.current = [];
+    evaluationsRef.current = [];
+    startTimeRef.current = null;
+    openAIService.resetConversation();
   }, []);
-
-  const handleStart = useCallback(async () => {
-    try {
-      setIsProcessing(true);
-      setVoiceError(null);
-      
-      const session = await startRoleplaySession(currentSession?.roleplayType, currentSession?.mode);
-      if (!session) {
-        throw new Error('Failed to start session');
-      }
-      setIsListening(true);
-      setLastSpeechTime(Date.now());
-    } catch (error) {
-      logger.error('Error starting roleplay:', error);
-      setVoiceError('Failed to start: ' + error.message);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [startRoleplaySession, currentSession?.roleplayType, currentSession?.mode]);
-
-  const handleEnd = useCallback(async () => {
-    try {
-      setIsProcessing(true);
-      await endSession();
-    } catch (error) {
-      logger.error('Error ending roleplay:', error);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [endSession]);
-
+  
+  // Get session statistics
+  const getSessionStats = useCallback(() => {
+    if (!currentSession) return null;
+    
+    const duration = startTimeRef.current ? 
+      Math.floor((Date.now() - startTimeRef.current) / 1000) : 0;
+    
+    return {
+      duration,
+      exchanges: Math.floor(conversationRef.current.length / 2),
+      evaluations: evaluationsRef.current.length,
+      currentStage: openAIService.currentStage
+    };
+  }, [currentSession]);
+  
+  // Handle silence timeout
+  const handleSilenceTimeout = useCallback(async () => {
+    if (callState !== 'connected' || isProcessing) return;
+    
+    logger.log('⏱️ Handling silence timeout');
+    
+    // Let OpenAI handle the silence
+    const silenceResult = await handleUserResponse('');
+    
+    return silenceResult;
+  }, [callState, isProcessing, handleUserResponse]);
+  
   const value = {
     // State
     currentSession,
     callState,
     sessionResults,
     isProcessing,
-    isListening,
-    voiceError,
     
     // Actions
     startRoleplaySession,
     handleUserResponse,
     endSession,
     resetSession,
-    
-    // Voice actions
-    handleProspectResponse,
-    handleSilenceWarning,
+    getSessionStats,
     handleSilenceTimeout,
-    handleStart,
-    handleEnd,
     
-    // Utility
-    initializeVoiceService
+    // Session data (for debugging)
+    conversation: conversationRef.current,
+    evaluations: evaluationsRef.current
   };
-
+  
   return (
     <RoleplayContext.Provider value={value}>
       {children}
     </RoleplayContext.Provider>
   );
 };
-
-export const useRoleplay = () => {
-  const context = useContext(RoleplayContext);
-  if (!context) {
-    throw new Error('useRoleplay must be used within a RoleplayProvider');
-  }
-  return context;
-};
-
-export default RoleplayProvider;
