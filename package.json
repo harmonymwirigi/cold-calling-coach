@@ -60,7 +60,7 @@
     ],
     "rules": {
       "react-hooks/exhaustive-deps": "warn",
-      "no-console": "warn",
+      "no-console": "off", 
       "no-unused-vars": "warn"
     }
   },
