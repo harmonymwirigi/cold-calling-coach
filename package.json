@@ -17,9 +17,7 @@
     "recharts": "^2.8.0",
     "resend": "^2.1.0",
     "tailwindcss": "^3.3.6",
-    "web-vitals": "^3.5.0",
-    "ajv": "8.12.0",
-    "ajv-keywords": "3.5.2"
+    "web-vitals": "^3.5.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.5",
@@ -38,6 +36,7 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
+    "vercel-build": "react-scripts build",
     "test": "react-scripts test",
     "test:watch": "react-scripts test --watch",
     "test:coverage": "react-scripts test --coverage --watchAll=false",
@@ -50,8 +49,7 @@
     "format": "prettier --write src/**/*.{js,jsx,ts,tsx,json,css,md}",
     "analyze": "npm run build && npx serve -s build",
     "deploy": "npm run build && vercel --prod",
-    "dev": "react-scripts start",
-    "vercel-build": "npm run build"
+    "dev": "react-scripts start"
   },
   "eslintConfig": {
     "extends": [
@@ -100,7 +98,7 @@
   "homepage": "https://ai-cold-calling-coach.vercel.app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/ai-cold-calling-coach.git"
+    "url": "https://github.com/harmonymwirigi/cold-calling-coach.git"
   },
   "keywords": [
     "ai",
@@ -111,6 +109,6 @@
     "voice-recognition",
     "speech-synthesis"
   ],
-  "author": "Your Name <your.email@example.com>",
+  "author": "Harmony Mwirigi",
   "license": "MIT"
 }
