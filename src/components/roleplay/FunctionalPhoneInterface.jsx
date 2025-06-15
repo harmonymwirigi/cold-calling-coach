@@ -97,10 +97,7 @@ const FunctionalPhoneInterface = () => {
           
           if (voiceAvailable) {
             logger.log('✅ Voice service available');
-            // Set up interruption handling
-            if (voiceService) {
-              voiceService.setInterruptCallback(handleUserInterruption);
-            }
+            
           } else {
             logger.warn('⚠️ Voice service not available - using text input');
           }
@@ -174,6 +171,7 @@ const FunctionalPhoneInterface = () => {
           setIsAISpeaking(true);
           try {
             await speakText(greeting);
+            logger.log('✅ AI spoke greeting');
           } catch (error) {
             logger.error('Failed to speak greeting:', error);
           } finally {
@@ -181,9 +179,11 @@ const FunctionalPhoneInterface = () => {
           }
         }
         
-        // Start continuous listening after greeting
+        // Start listening after greeting
         if (voiceServiceAvailable) {
-          startContinuousListening();
+          setTimeout(() => {
+            startContinuousListening();
+          }, 1000);
         }
       }, 500);
     } else if (callState === 'ended') {
@@ -301,39 +301,27 @@ const FunctionalPhoneInterface = () => {
 
       const aiResult = await handleUserResponse(transcript);
       
-      if (aiResult?.success) {
-        const aiResponse = aiResult.response;
-        setCurrentMessage(aiResponse);
-        setEvaluation(aiResult.evaluation);
-        addToConversationHistory('ai', aiResponse);
+     // In processUserInput function, after getting AI response:
+if (aiResult?.success) {
+  const aiResponse = aiResult.response;
+  setCurrentMessage(aiResponse);
+  setEvaluation(aiResult.evaluation);
+  addToConversationHistory('ai', aiResponse);
 
-        // Speak AI response
-        if (!isMuted && aiResponse && voiceServiceAvailable) {
-          setIsAISpeaking(true);
-          try {
-            await speakText(aiResponse, {
-              rate: 0.9,
-              pitch: 1.0,
-              volume: 0.8
-            });
-          } catch (speechError) {
-            logger.warn('❌ AI speech failed:', speechError);
-          } finally {
-            setIsAISpeaking(false);
-          }
-        }
-
-        // Handle call ending
-        if (aiResult.shouldHangUp) {
-          logger.log('📞 Call ending...');
-          setTimeout(() => {
-            handleCallEnd(aiResult.evaluation?.passed ? 'completed' : 'failed');
-          }, 2000);
-        }
-      } else {
-        logger.error('❌ AI processing failed:', aiResult?.error);
-        setError('Failed to process your response. Please try again.');
-      }
+  // Make sure AI speaks the response
+  if (!isMuted && aiResponse && voiceServiceAvailable) {
+    setIsAISpeaking(true);
+    try {
+      // This is the key part - actually speak!
+      await voiceService.speakText(aiResponse);
+      logger.log('✅ AI spoke response:', aiResponse);
+    } catch (speechError) {
+      logger.error('❌ AI speech failed:', speechError);
+    } finally {
+      setIsAISpeaking(false);
+    }
+  }
+}
     } catch (error) {
       logger.error('❌ Error processing user input:', error);
       setError('Failed to process your response. Please try again.');
