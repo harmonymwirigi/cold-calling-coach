@@ -1,4 +1,4 @@
-// src/services/voiceService.js - FIXED VERSION WITH CONTINUOUS LISTENING
+// src/services/voiceService.js - MOBILE-OPTIMIZED VERSION
 import logger from '../utils/logger';
 
 export class VoiceService {
@@ -15,21 +15,47 @@ export class VoiceService {
         this.voices = [];
         this.initializationPromise = null;
         
+        // MOBILE FIX: Detect mobile device
+        this.isMobile = this.detectMobileDevice();
+        this.mobileRecognitionActive = false;
+        this.lastRecognitionStart = 0;
+        this.recognitionRestartDelay = this.isMobile ? 1000 : 100; // Longer delay on mobile
+        
         // Voice provider configuration
-        this.voiceProvider = 'browser'; // 'elevenlabs', 'aws', or 'browser'
+        this.voiceProvider = 'browser'; // Default to browser for mobile compatibility
         this.elevenLabsApiKey = process.env.REACT_APP_ELEVENLABS_API_KEY;
         this.elevenLabsVoiceId = process.env.REACT_APP_ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
         
-        // CRITICAL FIX: Add conversation callbacks
+        // MOBILE FIX: Touch interaction tracking
+        this.userHasInteracted = false;
+        this.setupMobileInteractionDetection();
+        
+        // Conversation callbacks
         this.onUserSpeechCallback = null;
         this.onSilenceCallback = null;
         
-        // Bind methods
-        this.initialize = this.initialize.bind(this);
-        this.startListening = this.startListening.bind(this);
-        this.stopListening = this.stopListening.bind(this);
-        this.speakText = this.speakText.bind(this);
-        this.cleanup = this.cleanup.bind(this);
+        logger.log(`🎤 Voice service initialized for ${this.isMobile ? 'MOBILE' : 'DESKTOP'} device`);
+    }
+
+    // MOBILE FIX: Detect mobile devices
+    detectMobileDevice() {
+        const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+        return /android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase());
+    }
+
+    // MOBILE FIX: Setup touch interaction detection
+    setupMobileInteractionDetection() {
+        if (this.isMobile) {
+            const markInteraction = () => {
+                this.userHasInteracted = true;
+                logger.log('📱 User interaction detected on mobile');
+            };
+            
+            document.addEventListener('touchstart', markInteraction, { once: true });
+            document.addEventListener('click', markInteraction, { once: true });
+        } else {
+            this.userHasInteracted = true; // Desktop doesn't need this
+        }
     }
 
     async initialize() {
@@ -58,7 +84,7 @@ export class VoiceService {
     }
 
     async _performInitialization() {
-        logger.log('🎤 Starting voice service initialization...');
+        logger.log(`🎤 Starting voice service initialization for ${this.isMobile ? 'MOBILE' : 'DESKTOP'}...`);
 
         // Initialize speech synthesis
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -66,16 +92,24 @@ export class VoiceService {
             logger.log('✅ Speech synthesis available');
         }
 
-        // Initialize speech recognition
+        // Initialize speech recognition with mobile considerations
         try {
             await this.initializeSpeechRecognition();
             logger.log('✅ Speech recognition initialized');
         } catch (recognitionError) {
             logger.warn('⚠️ Speech recognition failed:', recognitionError);
+            if (this.isMobile) {
+                logger.warn('📱 Mobile speech recognition has limited support');
+            }
         }
 
-        // Determine voice provider
-        await this.determineVoiceProvider();
+        // Mobile-specific voice provider logic
+        if (this.isMobile) {
+            this.voiceProvider = 'browser'; // Always use browser on mobile
+            logger.log('📱 Using browser synthesis for mobile compatibility');
+        } else {
+            await this.determineVoiceProvider();
+        }
 
         // Load browser voices
         try {
@@ -102,15 +136,17 @@ export class VoiceService {
 
         this.recognition = new SpeechRecognition();
         
-        // CRITICAL FIX: Configure for continuous conversation
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
+        // MOBILE FIX: Different configuration for mobile
+        this.recognition.continuous = !this.isMobile; // Disable continuous on mobile
+        this.recognition.interimResults = !this.isMobile; // Disable interim on mobile
         this.recognition.lang = 'en-US';
         this.recognition.maxAlternatives = 1;
 
         this.recognition.onstart = () => {
-            logger.log('🎤 Speech recognition started');
+            this.lastRecognitionStart = Date.now();
+            logger.log(`🎤 Speech recognition started (${this.isMobile ? 'MOBILE' : 'DESKTOP'} mode)`);
             this.isListening = true;
+            this.mobileRecognitionActive = true;
         };
 
         this.recognition.onresult = (event) => {
@@ -118,42 +154,59 @@ export class VoiceService {
             const transcript = result[0].transcript.trim();
             const confidence = result[0].confidence || 0.8;
             
-            logger.log('📝 Speech recognized:', { transcript, confidence, isFinal: result.isFinal });
+            logger.log('📝 Speech recognized:', { 
+                transcript: transcript.substring(0, 50), 
+                confidence, 
+                isFinal: result.isFinal,
+                mobile: this.isMobile 
+            });
 
-            // CRITICAL FIX: Only process final results
-            if (result.isFinal && transcript.length > 2) {
-                this.handleUserSpeech(transcript, confidence);
+            // MOBILE FIX: Process both final and interim results on mobile
+            if (result.isFinal || this.isMobile) {
+                if (transcript.length > 2) {
+                    this.handleUserSpeech(transcript, confidence);
+                }
             }
         };
 
         this.recognition.onerror = (event) => {
             logger.error('❌ Speech recognition error:', event.error);
+            this.mobileRecognitionActive = false;
             this.handleSpeechError(event.error);
         };
 
         this.recognition.onend = () => {
             logger.log('🔚 Speech recognition ended');
             this.isListening = false;
+            this.mobileRecognitionActive = false;
             
-            // CRITICAL FIX: Restart if continuous listening is enabled
+            // MOBILE FIX: Controlled restart logic
             if (this.continuousListening && !this.isSpeaking) {
-                setTimeout(() => {
-                    if (this.continuousListening && !this.isSpeaking) {
-                        this.startListening();
-                    }
-                }, 100);
+                const timeSinceStart = Date.now() - this.lastRecognitionStart;
+                
+                // MOBILE FIX: Only restart if enough time has passed and we're still in continuous mode
+                if (timeSinceStart > 500) { // Minimum 500ms between restarts
+                    setTimeout(() => {
+                        if (this.continuousListening && !this.isSpeaking && !this.mobileRecognitionActive) {
+                            logger.log('🔄 Restarting speech recognition...');
+                            this.startListening();
+                        }
+                    }, this.recognitionRestartDelay);
+                }
             }
         };
 
-        logger.log('✅ Speech recognition configured for continuous listening');
+        logger.log(`✅ Speech recognition configured for ${this.isMobile ? 'MOBILE' : 'DESKTOP'}`);
     }
 
-    // CRITICAL FIX: Handle user speech and trigger AI response
+    // MOBILE FIX: Handle user speech with mobile considerations
     handleUserSpeech(transcript, confidence) {
-        logger.log('🗣️ Processing user speech:', transcript);
+        logger.log('🗣️ Processing user speech:', transcript.substring(0, 50));
         
-        // Stop listening temporarily while processing
-        this.stopListening();
+        // MOBILE FIX: Stop listening immediately on mobile to prevent restart loop
+        if (this.isMobile) {
+            this.stopListening();
+        }
         
         // Clear any silence timers
         if (this.silenceTimer) {
@@ -167,16 +220,26 @@ export class VoiceService {
         }
     }
 
-    // CRITICAL FIX: Start continuous listening with callbacks
+    // MOBILE FIX: Mobile-aware continuous listening
     startContinuousListening(onUserSpeech, onSilence) {
         this.onUserSpeechCallback = onUserSpeech;
         this.onSilenceCallback = onSilence;
-        this.continuousListening = true;
+        
+        if (this.isMobile) {
+            logger.log('📱 Starting MANUAL listening mode for mobile');
+            this.continuousListening = false; // Don't auto-restart on mobile
+            // Instead, we'll use manual trigger system
+        } else {
+            logger.log('🖥️ Starting CONTINUOUS listening mode for desktop');
+            this.continuousListening = true;
+        }
         
         this.startListening();
         
-        // CRITICAL FIX: Start silence detection
-        this.startSilenceDetection();
+        // MOBILE FIX: Different silence detection for mobile
+        if (!this.isMobile) {
+            this.startSilenceDetection();
+        }
     }
 
     stopContinuousListening() {
@@ -187,16 +250,19 @@ export class VoiceService {
         this.stopSilenceDetection();
     }
 
-    // CRITICAL FIX: Add silence detection
+    // MOBILE FIX: Mobile-aware silence detection
     startSilenceDetection() {
         this.stopSilenceDetection();
         
+        // MOBILE FIX: Longer silence timeout for mobile
+        const silenceTimeout = this.isMobile ? 15000 : 10000;
+        
         this.silenceTimer = setTimeout(() => {
             if (this.isListening && this.onSilenceCallback) {
-                logger.log('⏰ Silence detected');
+                logger.log(`⏰ Silence detected (${this.isMobile ? 'mobile' : 'desktop'})`);
                 this.onSilenceCallback();
             }
-        }, 10000); // 10 second silence timeout
+        }, silenceTimeout);
     }
 
     stopSilenceDetection() {
@@ -207,7 +273,20 @@ export class VoiceService {
     }
 
     async startListening() {
+        // MOBILE FIX: Check for user interaction on mobile
+        if (this.isMobile && !this.userHasInteracted) {
+            logger.warn('📱 Mobile requires user interaction before starting microphone');
+            throw new Error('Please tap the screen first to enable microphone on mobile');
+        }
+
         if (!this.recognition || this.isListening || this.isSpeaking) {
+            return;
+        }
+
+        // MOBILE FIX: Prevent rapid restarts
+        const timeSinceLastStart = Date.now() - this.lastRecognitionStart;
+        if (timeSinceLastStart < this.recognitionRestartDelay) {
+            logger.log('🚫 Preventing rapid recognition restart');
             return;
         }
 
@@ -216,14 +295,16 @@ export class VoiceService {
             this.recognition.start();
         } catch (error) {
             logger.error('❌ Failed to start listening:', error);
+            this.mobileRecognitionActive = false;
             throw error;
         }
     }
 
     stopListening() {
-        if (this.recognition && this.isListening) {
+        if (this.recognition && (this.isListening || this.mobileRecognitionActive)) {
             try {
                 this.recognition.stop();
+                this.mobileRecognitionActive = false;
             } catch (error) {
                 logger.warn('⚠️ Error stopping recognition:', error);
             }
@@ -231,7 +312,7 @@ export class VoiceService {
         this.stopSilenceDetection();
     }
 
-    // CRITICAL FIX: Improved speech synthesis with ElevenLabs
+    // MOBILE FIX: Mobile-optimized speech synthesis
     async speakText(text, options = {}) {
         try {
             if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -243,27 +324,32 @@ export class VoiceService {
                 await this.initialize();
             }
 
-            logger.log(`🗣️ Speaking text with ${this.voiceProvider}:`, text);
+            logger.log(`🗣️ Speaking text (${this.isMobile ? 'mobile' : 'desktop'}):`, text.substring(0, 50));
             
             this.isSpeaking = true;
             
             let result;
-            switch (this.voiceProvider) {
-                case 'elevenlabs':
+            // MOBILE FIX: Always use browser synthesis on mobile for better compatibility
+            if (this.isMobile || this.voiceProvider === 'browser') {
+                result = await this.speakWithBrowser(text, options);
+            } else {
+                try {
                     result = await this.speakWithElevenLabs(text, options);
-                    break;
-                
-                case 'browser':
-                default:
+                } catch (elevenLabsError) {
+                    logger.warn('ElevenLabs failed, falling back to browser:', elevenLabsError);
                     result = await this.speakWithBrowser(text, options);
-                    break;
+                }
             }
             
-            // CRITICAL FIX: Resume listening after speaking
+            // MOBILE FIX: Different post-speech behavior for mobile
             setTimeout(() => {
                 this.isSpeaking = false;
-                if (this.continuousListening) {
+                if (this.continuousListening && !this.isMobile) {
+                    // Only auto-restart on desktop
                     this.startListening();
+                } else if (this.isMobile && this.onUserSpeechCallback) {
+                    // On mobile, user needs to manually trigger next input
+                    logger.log('📱 Mobile: Waiting for manual input trigger');
                 }
             }, 500);
             
@@ -272,18 +358,79 @@ export class VoiceService {
         } catch (error) {
             logger.error('❌ Speak text error:', error);
             this.isSpeaking = false;
-            
-            // Fallback to browser if other methods fail
-            if (this.voiceProvider !== 'browser') {
-                logger.log('Falling back to browser synthesis...');
-                return await this.speakWithBrowser(text, options);
-            }
             throw error;
         }
     }
 
-    // CRITICAL FIX: Improved ElevenLabs integration
+    // Mobile-optimized browser synthesis
+    async speakWithBrowser(text, options = {}) {
+        if (!this.synthesis) {
+            throw new Error('Browser speech synthesis not supported');
+        }
+
+        return new Promise((resolve, reject) => {
+            this.stopCurrentAudio();
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            // MOBILE FIX: Mobile-optimized settings
+            utterance.rate = this.isMobile ? 0.8 : (options.rate || 0.9);
+            utterance.pitch = options.pitch || 1.0;
+            utterance.volume = options.volume || 0.8;
+            utterance.lang = 'en-US';
+
+            // Find best voice for mobile
+            const preferredVoice = this.voices.find(voice => 
+                voice.lang.includes('en-US') && 
+                (this.isMobile ? true : voice.name.toLowerCase().includes('female'))
+            ) || this.voices.find(voice => voice.lang.includes('en-US')) || this.voices[0];
+            
+            if (preferredVoice) {
+                utterance.voice = preferredVoice;
+            }
+
+            this.currentUtterance = utterance;
+
+            // MOBILE FIX: Shorter timeout for mobile
+            const timeout = setTimeout(() => {
+                this.stopCurrentAudio();
+                reject(new Error('Speech synthesis timed out'));
+            }, this.isMobile ? 15000 : 30000);
+
+            utterance.onend = () => {
+                clearTimeout(timeout);
+                logger.log('✅ Browser synthesis completed');
+                this.currentUtterance = null;
+                resolve({
+                    success: true,
+                    synthesisType: 'browser',
+                    mobile: this.isMobile
+                });
+            };
+
+            utterance.onerror = (event) => {
+                clearTimeout(timeout);
+                logger.error('❌ Browser synthesis error:', event.error);
+                this.currentUtterance = null;
+                reject(new Error(`Browser synthesis error: ${event.error}`));
+            };
+
+            try {
+                this.synthesis.speak(utterance);
+            } catch (error) {
+                clearTimeout(timeout);
+                this.currentUtterance = null;
+                reject(error);
+            }
+        });
+    }
+
+    // ElevenLabs synthesis (desktop only)
     async speakWithElevenLabs(text, options = {}) {
+        if (this.isMobile) {
+            throw new Error('ElevenLabs not supported on mobile');
+        }
+
         if (!this.elevenLabsApiKey) {
             throw new Error('ElevenLabs API key not configured');
         }
@@ -314,18 +461,13 @@ export class VoiceService {
             );
 
             if (!response.ok) {
-                const errorText = await response.text();
-                logger.error('ElevenLabs API error:', response.status, errorText);
                 throw new Error(`ElevenLabs API error: ${response.status}`);
             }
 
             const audioBlob = await response.blob();
             const audioUrl = URL.createObjectURL(audioBlob);
 
-            // Play the audio
             await this.playAudio(audioUrl, options);
-
-            // Clean up
             URL.revokeObjectURL(audioUrl);
 
             logger.log('✅ ElevenLabs speech completed');
@@ -366,9 +508,14 @@ export class VoiceService {
         });
     }
 
-    // Determine voice provider
+    // Voice provider selection (desktop only)
     async determineVoiceProvider() {
-        // Check ElevenLabs first (preferred)
+        if (this.isMobile) {
+            this.voiceProvider = 'browser';
+            return;
+        }
+
+        // Check ElevenLabs first (desktop only)
         if (this.elevenLabsApiKey) {
             try {
                 const response = await fetch('https://api.elevenlabs.io/v1/voices', {
@@ -387,70 +534,8 @@ export class VoiceService {
             }
         }
 
-        // Fallback to browser
         this.voiceProvider = 'browser';
         logger.log('ℹ️ Using browser speech synthesis');
-    }
-
-    async speakWithBrowser(text, options = {}) {
-        if (!this.synthesis) {
-            throw new Error('Browser speech synthesis not supported');
-        }
-
-        return new Promise((resolve, reject) => {
-            this.stopCurrentAudio();
-
-            const utterance = new SpeechSynthesisUtterance(text);
-            
-            utterance.rate = options.rate || 0.9;
-            utterance.pitch = options.pitch || 1.0;
-            utterance.volume = options.volume || 0.8;
-            utterance.lang = 'en-US';
-
-            // Find best voice
-            const preferredVoice = this.voices.find(voice => 
-                voice.lang.includes('en-US') && 
-                (voice.name.toLowerCase().includes('samantha') || 
-                 voice.name.toLowerCase().includes('karen') ||
-                 voice.name.toLowerCase().includes('female'))
-            ) || this.voices.find(voice => voice.lang.includes('en-US')) || this.voices[0];
-            
-            if (preferredVoice) {
-                utterance.voice = preferredVoice;
-            }
-
-            this.currentUtterance = utterance;
-
-            const timeout = setTimeout(() => {
-                this.stopCurrentAudio();
-                reject(new Error('Speech synthesis timed out'));
-            }, 30000);
-
-            utterance.onend = () => {
-                clearTimeout(timeout);
-                logger.log('✅ Browser synthesis completed');
-                this.currentUtterance = null;
-                resolve({
-                    success: true,
-                    synthesisType: 'browser'
-                });
-            };
-
-            utterance.onerror = (event) => {
-                clearTimeout(timeout);
-                logger.error('❌ Browser synthesis error:', event.error);
-                this.currentUtterance = null;
-                reject(new Error(`Browser synthesis error: ${event.error}`));
-            };
-
-            try {
-                this.synthesis.speak(utterance);
-            } catch (error) {
-                clearTimeout(timeout);
-                this.currentUtterance = null;
-                reject(error);
-            }
-        });
     }
 
     stopCurrentAudio() {
@@ -554,8 +639,8 @@ export class VoiceService {
         
         const message = errorMessages[error] || 'Speech recognition error occurred.';
         
-        // Auto-restart on recoverable errors
-        if (error === 'no-speech' && this.continuousListening) {
+        // MOBILE FIX: Don't auto-restart on mobile errors
+        if (error === 'no-speech' && this.continuousListening && !this.isMobile) {
             setTimeout(() => {
                 if (this.continuousListening && !this.isSpeaking) {
                     this.startListening();
@@ -571,7 +656,9 @@ export class VoiceService {
             isInitialized: this.isInitialized || false,
             continuousListening: this.continuousListening || false,
             voiceProvider: this.voiceProvider,
-            elevenLabsConfigured: !!this.elevenLabsApiKey
+            elevenLabsConfigured: !!this.elevenLabsApiKey,
+            isMobile: this.isMobile,
+            userHasInteracted: this.userHasInteracted
         };
     }
 
@@ -587,6 +674,7 @@ export class VoiceService {
 
         this.isInitialized = false;
         this.initializationPromise = null;
+        this.mobileRecognitionActive = false;
     }
 }
 
