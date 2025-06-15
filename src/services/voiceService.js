@@ -147,8 +147,8 @@ export class VoiceService {
     this.recognition = new SpeechRecognition();
     
     // Configure for cold calling
-    this.recognition.continuous = false;
-    this.recognition.interimResults = false;
+    this.recognition.continuous = true;  // Enable continuous listening
+    this.recognition.interimResults = true;  // Enable interim results for better UX
     this.recognition.lang = 'en-US';
     this.recognition.maxAlternatives = 1;
 
@@ -206,18 +206,24 @@ export class VoiceService {
 
         this.recognition.onresult = (event) => {
           clearTimeout(timeout);
-          const result = event.results[0];
+          const result = event.results[event.results.length - 1];  // Get the latest result
           const transcript = result[0].transcript;
           const confidence = result[0].confidence;
 
-          logger.log('📝 Speech recognized:', { transcript, confidence });
+          logger.log('📝 Speech recognized:', { transcript, confidence, isFinal: result.isFinal });
 
-          resolve({
-            transcript: transcript.trim(),
-            confidence,
-            isFinal: result.isFinal,
-            timestamp: new Date().toISOString()
-          });
+          // Only resolve on final results
+          if (result.isFinal) {
+            resolve({
+              transcript: transcript.trim(),
+              confidence,
+              isFinal: true,
+              timestamp: new Date().toISOString()
+            });
+          } else if (options.onInterim) {
+            // Call interim callback if provided
+            options.onInterim(transcript);
+          }
         };
 
         this.recognition.onerror = (event) => {
@@ -240,6 +246,15 @@ export class VoiceService {
         this.recognition.onend = () => {
           logger.log('🔚 Speech recognition ended');
           this.isListening = false;
+          
+          // Restart if continuous mode is enabled
+          if (this.recognition.continuous && !this.isListening) {
+            try {
+              this.recognition.start();
+            } catch (error) {
+              logger.warn('Could not restart recognition:', error);
+            }
+          }
         };
 
         try {

@@ -109,7 +109,7 @@ export const useVoice = () => {
     checkVoiceService();
   }, [initializeVoiceService]);
 
-  const startListening = useCallback(async (onResult, onError) => {
+  const startListening = useCallback(async (options = {}) => {
     try {
       setError(null);
 
@@ -117,7 +117,7 @@ export const useVoice = () => {
       if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         const errorMsg = 'Speech recognition not supported in this browser';
         setError(errorMsg);
-        if (onError) onError(errorMsg);
+        if (options.onError) options.onError(errorMsg);
         return null;
       }
 
@@ -131,11 +131,13 @@ export const useVoice = () => {
       // Use voice service if available and working
       if (initialized && voiceService && typeof voiceService.startListening === 'function') {
         try {
-          const result = await voiceService.startListening();
+          const result = await voiceService.startListening({
+            continuous: true,
+            onResult: options.onResult,
+            onInterim: options.onInterim,
+            onError: options.onError
+          });
           setIsListening(true);
-          if (onResult && result) {
-            onResult(result.transcript, result.confidence);
-          }
           return result;
         } catch (voiceError) {
           logger.warn('Voice service listening failed, falling back to browser API:', voiceError);
@@ -144,29 +146,29 @@ export const useVoice = () => {
       }
 
       // Fallback to direct browser speech recognition
-      return await this.startBrowserListening(onResult, onError);
+      return await startBrowserListening(options);
 
     } catch (error) {
       setIsListening(false);
       logger.error('❌ Error in startListening:', error);
       const errorMsg = error.message || 'Failed to start listening';
       setError(errorMsg);
-      if (onError) {
-        onError(errorMsg);
+      if (options.onError) {
+        options.onError(errorMsg);
       }
       return null;
     }
   }, [initializeVoiceService]);
 
   // Browser fallback listening method
-  const startBrowserListening = useCallback(async (onResult, onError) => {
+  const startBrowserListening = useCallback(async (options = {}) => {
     logger.log('🎤 Using browser fallback for speech recognition');
     
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.interimResults = true;
     recognition.lang = 'en-US';
 
     return new Promise((resolve, reject) => {
@@ -176,35 +178,46 @@ export const useVoice = () => {
       };
 
       recognition.onend = () => {
-        setIsListening(false);
         logger.log('🔚 Browser speech recognition ended (fallback)');
+        
+        // Restart if continuous mode is enabled
+        if (recognition.continuous && !isListening) {
+          try {
+            recognition.start();
+          } catch (error) {
+            logger.warn('Could not restart browser recognition:', error);
+          }
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        const confidence = event.results[0][0].confidence;
-        logger.log('📝 Speech recognized (fallback):', { transcript, confidence });
+        const result = event.results[event.results.length - 1];
+        const transcript = result[0].transcript;
+        const confidence = result[0].confidence;
         
-        const result = {
-          transcript: transcript.trim(),
+        logger.log('📝 Speech recognized (fallback):', { 
+          transcript, 
           confidence,
-          isFinal: event.results[0].isFinal,
-          timestamp: new Date().toISOString()
-        };
+          isFinal: result.isFinal 
+        });
         
-        if (onResult) {
-          onResult(transcript, confidence);
+        if (result.isFinal) {
+          if (options.onResult) {
+            options.onResult(transcript, confidence);
+          }
+        } else if (options.onInterim) {
+          options.onInterim(transcript);
         }
-        resolve(result);
       };
 
       recognition.onerror = (event) => {
-        setIsListening(false);
         logger.error('❌ Speech recognition error (fallback):', event.error);
         const errorMsg = `Speech recognition error: ${event.error}`;
         setError(errorMsg);
-        if (onError) {
-          onError(errorMsg);
+        if (options.onError) {
+          options.onError(errorMsg);
         }
         reject(new Error(errorMsg));
       };
@@ -218,7 +231,7 @@ export const useVoice = () => {
         reject(startError);
       }
     });
-  }, []);
+  }, [isListening]);
 
   const stopListening = useCallback(() => {
     try {
