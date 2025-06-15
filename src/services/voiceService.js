@@ -1,6 +1,5 @@
-// src/services/voiceService.js - ENHANCED VERSION WITH AWS POLLY
+// src/services/voiceService.js - FIXED VERSION WITH ELEVENLABS
 import logger from '../utils/logger';
-import AWS from 'aws-sdk';
 
 export class VoiceService {
   constructor() {
@@ -8,9 +7,6 @@ export class VoiceService {
     this.isListening = false;
     this.isSpeaking = false;
     this.silenceTimer = null;
-    this.silenceStartTime = null;
-    this.onSilenceCallback = null;
-    this.onHangupCallback = null;
     this.currentUtterance = null;
     this.synthesis = null;
     this.audioContext = null;
@@ -18,18 +14,14 @@ export class VoiceService {
     this.voices = [];
     this.initializationPromise = null;
     
-    // AWS Polly configuration
-    this.polly = null;
-    this.pollyEnabled = false;
-    this.preferredVoiceId = 'Joanna'; // Natural sounding US English voice
+    // Voice provider configuration
+    this.voiceProvider = 'browser'; // 'elevenlabs', 'aws', or 'browser'
+    this.elevenLabsApiKey = process.env.REACT_APP_ELEVENLABS_API_KEY;
+    this.elevenLabsVoiceId = process.env.REACT_APP_ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'; // Sarah voice
     
     // Audio queue for smooth playback
     this.audioQueue = [];
     this.isPlayingAudio = false;
-    
-    // Continuous recognition for interruptions
-    this.continuousMode = false;
-    this.onInterruptCallback = null;
     
     // Bind methods
     this.initialize = this.initialize.bind(this);
@@ -39,11 +31,10 @@ export class VoiceService {
     this.cleanup = this.cleanup.bind(this);
   }
 
-  // Initialize the voice service with AWS Polly support
+  // Initialize the voice service
   async initialize() {
     try {
       if (this.initializationPromise) {
-        logger.log('🎤 Voice service initialization already in progress');
         return await this.initializationPromise;
       }
 
@@ -62,7 +53,8 @@ export class VoiceService {
       this.initializationPromise = null;
       logger.error('❌ Voice service initialization failed:', error);
       this.isInitialized = false;
-      throw error;
+      // Don't throw - continue with degraded functionality
+      return false;
     }
   }
 
@@ -72,7 +64,7 @@ export class VoiceService {
     // Check browser compatibility
     const compatibility = this.checkCompatibility();
     if (!compatibility.compatible) {
-      throw new Error(`Browser not compatible: ${compatibility.issues.join(', ')}`);
+      logger.warn(`Browser not compatible: ${compatibility.issues.join(', ')}`);
     }
 
     // Initialize speech synthesis
@@ -81,7 +73,7 @@ export class VoiceService {
       logger.log('✅ Speech synthesis available');
     }
 
-    // Initialize speech recognition with continuous mode support
+    // Initialize speech recognition
     try {
       await this.initializeSpeechRecognition();
       logger.log('✅ Speech recognition initialized');
@@ -99,93 +91,71 @@ export class VoiceService {
       }
     }
 
-    // Initialize AWS Polly if credentials are available
-    await this.initializeAWSPolly();
+    // Determine voice provider
+    await this.determineVoiceProvider();
 
-    // Load voices
+    // Load browser voices
     try {
       await this.loadVoicesWithTimeout(3000);
-      logger.log('✅ Voices loaded successfully');
+      logger.log('✅ Browser voices loaded');
     } catch (voiceError) {
       logger.warn('⚠️ Voice loading failed:', voiceError);
     }
 
     this.isInitialized = true;
-    logger.log('✅ Voice service initialized successfully');
+    logger.log(`✅ Voice service initialized with ${this.voiceProvider} provider`);
     return true;
   }
 
-  // Initialize AWS Polly
-  async initializeAWSPolly() {
-    try {
-      // Check if AWS credentials are available
-      const accessKeyId = process.env.REACT_APP_AWS_ACCESS_KEY_ID;
-      const secretAccessKey = process.env.REACT_APP_AWS_SECRET_ACCESS_KEY;
-      const region = process.env.REACT_APP_AWS_REGION || 'us-east-1';
-
-      if (!accessKeyId || !secretAccessKey) {
-        logger.warn('⚠️ AWS credentials not found, Polly will not be available');
-        return false;
-      }
-
-      // Configure AWS
-      AWS.config.update({
-        accessKeyId,
-        secretAccessKey,
-        region
-      });
-
-      // Create Polly service object
-      this.polly = new AWS.Polly();
-
-      // Test Polly connection
+  // Determine which voice provider to use
+  async determineVoiceProvider() {
+    // Check ElevenLabs first (preferred)
+    if (this.elevenLabsApiKey) {
       try {
-        const voices = await this.polly.describeVoices({ LanguageCode: 'en-US' }).promise();
-        logger.log(`✅ AWS Polly initialized with ${voices.Voices.length} English voices`);
-        this.pollyEnabled = true;
-        return true;
-      } catch (testError) {
-        logger.error('❌ AWS Polly test failed:', testError);
-        this.pollyEnabled = false;
-        return false;
+        const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+          headers: {
+            'xi-api-key': this.elevenLabsApiKey
+          }
+        });
+        
+        if (response.ok) {
+          this.voiceProvider = 'elevenlabs';
+          logger.log('✅ ElevenLabs API key valid - using ElevenLabs for voice synthesis');
+          return;
+        }
+      } catch (error) {
+        logger.warn('⚠️ ElevenLabs check failed:', error);
       }
-
-    } catch (error) {
-      logger.error('❌ AWS Polly initialization failed:', error);
-      this.pollyEnabled = false;
-      return false;
     }
+
+    // Fallback to browser
+    this.voiceProvider = 'browser';
+    logger.log('ℹ️ Using browser speech synthesis');
   }
 
-  // Initialize speech recognition with continuous mode
+  // Initialize speech recognition
   async initializeSpeechRecognition() {
     if (typeof window === 'undefined') {
       throw new Error('Window object not available');
     }
 
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      throw new Error('Speech recognition not supported in this browser');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      throw new Error('Speech recognition not supported');
     }
 
-    try {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      this.recognition = new SpeechRecognition();
-      
-      // Configure for natural conversation
-      this.recognition.continuous = true; // Enable continuous mode for interruptions
-      this.recognition.interimResults = true; // Get results while speaking
-      this.recognition.lang = 'en-US';
-      this.recognition.maxAlternatives = 1;
+    this.recognition = new SpeechRecognition();
+    
+    // Configure for cold calling
+    this.recognition.continuous = false;
+    this.recognition.interimResults = false;
+    this.recognition.lang = 'en-US';
+    this.recognition.maxAlternatives = 1;
 
-      logger.log('✅ Speech recognition initialized with continuous mode');
-      return this.recognition;
-    } catch (error) {
-      logger.error('Speech recognition initialization failed:', error);
-      throw error;
-    }
+    logger.log('✅ Speech recognition configured');
   }
 
-  // Start listening with interruption support
+  // Start listening for speech
   async startListening(options = {}) {
     try {
       if (!this.isInitialized) {
@@ -193,8 +163,9 @@ export class VoiceService {
       }
 
       if (this.isListening) {
-        logger.log('Already listening');
-        return;
+        logger.log('Already listening, stopping first...');
+        this.stopListening();
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
       if (!this.recognition) {
@@ -215,118 +186,66 @@ export class VoiceService {
         }
       }
 
-      this.isListening = true;
-      this.continuousMode = options.continuous || false;
-      
       return new Promise((resolve, reject) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        let recognitionTimeout;
+        this.isListening = true;
+        logger.log('🎤 Starting speech recognition...');
 
-        // Set up timeout
-        const resetTimeout = () => {
-          if (recognitionTimeout) clearTimeout(recognitionTimeout);
-          recognitionTimeout = setTimeout(() => {
-            if (!this.continuousMode) {
-              this.stopListening();
-              resolve({
-                transcript: finalTranscript.trim(),
-                confidence: 0.9,
-                isFinal: true,
-                timestamp: new Date().toISOString()
-              });
-            }
-          }, options.timeout || 3000); // 3 second timeout after last speech
-        };
+        const timeout = setTimeout(() => {
+          this.stopListening();
+          resolve({
+            transcript: '',
+            confidence: 0,
+            isFinal: true,
+            error: 'No speech detected'
+          });
+        }, options.timeout || 10000); // 10 second timeout
 
         this.recognition.onstart = () => {
           logger.log('🎤 Speech recognition started');
-          resetTimeout();
         };
 
         this.recognition.onresult = (event) => {
-          interimTranscript = '';
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i];
-            const transcript = result[0].transcript;
-            
-            if (result.isFinal) {
-              finalTranscript += transcript + ' ';
-              
-              // Check for interruption during AI speech
-              if (this.isSpeaking && this.onInterruptCallback) {
-                logger.log('🛑 User interruption detected');
-                this.stopSpeaking();
-                this.onInterruptCallback(transcript);
-              }
-              
-              // Call the result callback if provided
-              if (options.onResult) {
-                options.onResult(transcript, result[0].confidence);
-              }
-            } else {
-              interimTranscript += transcript;
-              
-              // Provide interim results for real-time feedback
-              if (options.onInterim) {
-                options.onInterim(interimTranscript);
-              }
-            }
-          }
-          
-          resetTimeout();
-          
-          logger.log('📝 Speech recognized:', { 
-            final: finalTranscript.trim(), 
-            interim: interimTranscript 
+          clearTimeout(timeout);
+          const result = event.results[0];
+          const transcript = result[0].transcript;
+          const confidence = result[0].confidence;
+
+          logger.log('📝 Speech recognized:', { transcript, confidence });
+
+          resolve({
+            transcript: transcript.trim(),
+            confidence,
+            isFinal: result.isFinal,
+            timestamp: new Date().toISOString()
           });
         };
 
         this.recognition.onerror = (event) => {
+          clearTimeout(timeout);
           logger.error('❌ Speech recognition error:', event.error);
           this.isListening = false;
           
           if (event.error === 'no-speech') {
-            // No speech detected is not an error in continuous mode
-            if (!this.continuousMode) {
-              resolve({
-                transcript: finalTranscript.trim() || '',
-                confidence: 0,
-                isFinal: true,
-                timestamp: new Date().toISOString()
-              });
-            }
+            resolve({
+              transcript: '',
+              confidence: 0,
+              isFinal: true,
+              error: 'No speech detected'
+            });
           } else {
-            const errorMessages = {
-              'not-allowed': 'Microphone access denied',
-              'audio-capture': 'Microphone not available',
-              'network': 'Network error',
-              'aborted': 'Recognition cancelled'
-            };
-            const errorMessage = errorMessages[event.error] || `Recognition error: ${event.error}`;
-            reject(new Error(errorMessage));
+            reject(new Error(`Speech recognition error: ${event.error}`));
           }
         };
 
         this.recognition.onend = () => {
           logger.log('🔚 Speech recognition ended');
           this.isListening = false;
-          
-          if (!this.continuousMode || finalTranscript.trim()) {
-            resolve({
-              transcript: finalTranscript.trim(),
-              confidence: 0.9,
-              isFinal: true,
-              timestamp: new Date().toISOString()
-            });
-          }
         };
 
-        // Start recognition
         try {
           this.recognition.start();
         } catch (error) {
+          clearTimeout(timeout);
           this.isListening = false;
           reject(error);
         }
@@ -349,10 +268,9 @@ export class VoiceService {
       }
     }
     this.isListening = false;
-    this.continuousMode = false;
   }
 
-  // Speak text using AWS Polly or browser fallback
+  // Speak text using the configured provider
   async speakText(text, options = {}) {
     try {
       if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -364,106 +282,114 @@ export class VoiceService {
         await this.initialize();
       }
 
-      logger.log('🗣️ Speaking text:', text);
+      logger.log(`🗣️ Speaking text with ${this.voiceProvider}:`, text);
       
-      // Try AWS Polly first if enabled
-      if (this.pollyEnabled && this.polly) {
-        try {
-          return await this.speakWithPolly(text, options);
-        } catch (pollyError) {
-          logger.warn('⚠️ Polly synthesis failed, falling back to browser:', pollyError);
-        }
+      let result;
+      switch (this.voiceProvider) {
+        case 'elevenlabs':
+          result = await this.speakWithElevenLabs(text, options);
+          break;
+        
+        case 'browser':
+        default:
+          result = await this.speakWithBrowser(text, options);
+          break;
       }
       
-      // Fallback to browser synthesis
-      return await this.speakWithBrowser(text, options);
+      return result;
 
     } catch (error) {
       logger.error('❌ Speak text error:', error);
+      // Fallback to browser if other methods fail
+      if (this.voiceProvider !== 'browser') {
+        logger.log('Falling back to browser synthesis...');
+        return await this.speakWithBrowser(text, options);
+      }
       throw error;
     }
   }
 
-  // Speak using AWS Polly
-  async speakWithPolly(text, options = {}) {
-    if (!this.polly) {
-      throw new Error('AWS Polly not initialized');
+  // Speak using ElevenLabs API
+  async speakWithElevenLabs(text, options = {}) {
+    if (!this.elevenLabsApiKey) {
+      throw new Error('ElevenLabs API key not configured');
     }
 
-    return new Promise((resolve, reject) => {
-      const params = {
-        Text: text,
-        OutputFormat: 'mp3',
-        VoiceId: options.voiceId || this.preferredVoiceId,
-        Engine: 'neural', // Use neural voice for more natural speech
-        SampleRate: '24000',
-        TextType: 'text'
-      };
+    try {
+      this.isSpeaking = true;
+      
+      // Call ElevenLabs text-to-speech API
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${this.elevenLabsVoiceId}/stream`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': this.elevenLabsApiKey,
+            'Content-Type': 'application/json',
+            'Accept': 'audio/mpeg'
+          },
+          body: JSON.stringify({
+            text: text,
+            model_id: 'eleven_monolingual_v1',
+            voice_settings: {
+              stability: options.stability || 0.5,
+              similarity_boost: options.similarity || 0.75
+            }
+          })
+        }
+      );
 
-      // Add SSML support if needed
-      if (text.includes('<speak>')) {
-        params.TextType = 'ssml';
+      if (!response.ok) {
+        throw new Error(`ElevenLabs API error: ${response.status}`);
       }
 
-      this.polly.synthesizeSpeech(params, async (err, data) => {
-        if (err) {
-          logger.error('❌ Polly synthesis error:', err);
-          reject(err);
-          return;
-        }
+      // Get audio data
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
 
-        try {
-          // Convert audio stream to blob
-          const audioBlob = new Blob([data.AudioStream], { type: 'audio/mpeg' });
-          const audioUrl = URL.createObjectURL(audioBlob);
+      // Play the audio
+      await this.playAudio(audioUrl, options);
 
-          // Play the audio
-          await this.playAudio(audioUrl, options);
+      // Clean up
+      URL.revokeObjectURL(audioUrl);
 
-          // Clean up
-          URL.revokeObjectURL(audioUrl);
+      logger.log('✅ ElevenLabs speech completed');
+      return {
+        success: true,
+        synthesisType: 'elevenlabs',
+        voiceId: this.elevenLabsVoiceId
+      };
 
-          resolve({
-            success: true,
-            synthesisType: 'aws-polly',
-            voiceId: params.VoiceId
-          });
-
-        } catch (playError) {
-          logger.error('❌ Error playing Polly audio:', playError);
-          reject(playError);
-        }
-      });
-    });
+    } catch (error) {
+      logger.error('❌ ElevenLabs synthesis error:', error);
+      throw error;
+    } finally {
+      this.isSpeaking = false;
+    }
   }
 
-  // Play audio with interruption support
+  // Play audio file
   async playAudio(audioUrl, options = {}) {
     return new Promise((resolve, reject) => {
       const audio = new Audio(audioUrl);
       
-      // Configure audio
       audio.volume = options.volume || 0.8;
       audio.playbackRate = options.rate || 1.0;
 
-      this.isSpeaking = true;
       this.currentAudio = audio;
 
       audio.onended = () => {
         logger.log('✅ Audio playback completed');
-        this.isSpeaking = false;
         this.currentAudio = null;
         resolve();
       };
 
       audio.onerror = (error) => {
         logger.error('❌ Audio playback error:', error);
-        this.isSpeaking = false;
         this.currentAudio = null;
         reject(error);
       };
 
-      // Play the audio
       audio.play().catch(reject);
     });
   }
@@ -479,7 +405,6 @@ export class VoiceService {
 
       const utterance = new SpeechSynthesisUtterance(text);
       
-      // Configure for natural speech
       utterance.rate = options.rate || 0.9;
       utterance.pitch = options.pitch || 1.0;
       utterance.volume = options.volume || 0.8;
@@ -487,10 +412,11 @@ export class VoiceService {
 
       // Find best voice
       const preferredVoice = this.voices.find(voice => 
-        voice.lang.includes('en-US') && voice.name.toLowerCase().includes('natural')
-      ) || this.voices.find(voice => 
-        voice.lang.includes('en-US')
-      ) || this.voices[0];
+        voice.lang.includes('en-US') && 
+        (voice.name.toLowerCase().includes('samantha') || 
+         voice.name.toLowerCase().includes('karen') ||
+         voice.name.toLowerCase().includes('female'))
+      ) || this.voices.find(voice => voice.lang.includes('en-US')) || this.voices[0];
       
       if (preferredVoice) {
         utterance.voice = preferredVoice;
@@ -541,7 +467,7 @@ export class VoiceService {
 
   // Stop current audio/speech
   stopCurrentAudio() {
-    // Stop Polly audio if playing
+    // Stop ElevenLabs audio if playing
     if (this.currentAudio) {
       try {
         this.currentAudio.pause();
@@ -567,14 +493,9 @@ export class VoiceService {
     this.isSpeaking = false;
   }
 
-  // Stop speaking (alias for stopCurrentAudio)
+  // Stop speaking (alias)
   stopSpeaking() {
     this.stopCurrentAudio();
-  }
-
-  // Set interruption callback
-  setInterruptCallback(callback) {
-    this.onInterruptCallback = callback;
   }
 
   // Request microphone permission
@@ -598,7 +519,7 @@ export class VoiceService {
     }
   }
 
-  // Load available voices
+  // Load browser voices
   async loadVoicesWithTimeout(timeoutMs = 3000) {
     return new Promise((resolve) => {
       if (!this.synthesis) {
@@ -665,8 +586,7 @@ export class VoiceService {
       speechRecognition: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
       speechSynthesis: 'speechSynthesis' in window,
       mediaDevices: typeof navigator !== 'undefined' && 'mediaDevices' in navigator,
-      audioContext: 'AudioContext' in window || 'webkitAudioContext' in window,
-      promises: 'Promise' in window
+      audioContext: 'AudioContext' in window || 'webkitAudioContext' in window
     };
 
     const issues = [];
@@ -711,7 +631,8 @@ export class VoiceService {
       isSpeaking: this.isSpeaking || false,
       isInitialized: this.isInitialized || false,
       hasAudioContext: !!this.audioContext,
-      pollyEnabled: this.pollyEnabled || false
+      voiceProvider: this.voiceProvider,
+      elevenLabsConfigured: !!this.elevenLabsApiKey
     };
   }
 

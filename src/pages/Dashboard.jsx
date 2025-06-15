@@ -199,7 +199,11 @@ const Dashboard = () => {
   useEffect(() => {
     if (!loading) {
       setStats(getOverallStats());
-      setRecentActivity(getRecentActivity());
+      const fetchActivity = async () => {
+        const activity = await getRecentActivity();
+        setRecentActivity(activity);
+      };
+      fetchActivity();
     }
   }, [loading, getOverallStats, getRecentActivity]);
 
