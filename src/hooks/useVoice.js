@@ -1,6 +1,7 @@
-// src/hooks/useVoice.js - FIXED VERSION
+// src/hooks/useVoice.js - FIXED VERSION WITH ROLEPLAY INTEGRATION
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { voiceService } from '../services/voiceService';
+import { useRoleplay } from '../contexts/RoleplayContext';
 import logger from '../utils/logger';
 
 export const useVoice = () => {
@@ -10,11 +11,19 @@ export const useVoice = () => {
   const [error, setError] = useState(null);
   const [initializationAttempted, setInitializationAttempted] = useState(false);
   
+  // CRITICAL FIX: Get roleplay context
+  const { 
+    currentSession, 
+    callState, 
+    handleUserSpeech: roleplayHandleUserSpeech,
+    conversationActive 
+  } = useRoleplay();
+  
   const recognitionRef = useRef(null);
   const initializationRef = useRef(false);
   const initTimeoutRef = useRef(null);
 
-  // Initialize voice service safely with shorter timeout
+  // CRITICAL FIX: Initialize voice service with roleplay integration
   const initializeVoiceService = useCallback(async () => {
     if (initializationRef.current) {
       logger.log('🎤 Voice service initialization already attempted');
@@ -38,25 +47,18 @@ export const useVoice = () => {
         return true;
       }
 
-      // Set a shorter timeout to prevent infinite initialization
-      if (initTimeoutRef.current) {
-        clearTimeout(initTimeoutRef.current);
-      }
-
       logger.log('🎤 Starting voice service initialization...');
 
-      // Create initialization promise with timeout
+      // Initialize with timeout
       const initPromise = voiceService.initialize();
       const timeoutPromise = new Promise((_, reject) => {
         initTimeoutRef.current = setTimeout(() => {
           reject(new Error('Voice service initialization timed out after 5 seconds'));
-        }, 5000); // Reduced to 5 seconds
+        }, 5000);
       });
 
-      // Race between initialization and timeout
       await Promise.race([initPromise, timeoutPromise]);
       
-      // Clear timeout if initialization succeeded
       if (initTimeoutRef.current) {
         clearTimeout(initTimeoutRef.current);
         initTimeoutRef.current = null;
@@ -70,18 +72,15 @@ export const useVoice = () => {
     } catch (error) {
       logger.error('❌ Voice service initialization failed in hook:', error);
       
-      // Clear timeout
       if (initTimeoutRef.current) {
         clearTimeout(initTimeoutRef.current);
         initTimeoutRef.current = null;
       }
 
-      // Set error but don't prevent app from working
       setError(error.message);
       setIsInitialized(false);
-      initializationRef.current = true; // Mark as attempted to prevent retries
+      initializationRef.current = true;
       
-      // Don't throw - let the app continue with degraded functionality
       logger.warn('⚠️ Continuing without voice service - functionality will be limited');
       return false;
     }
@@ -96,7 +95,6 @@ export const useVoice = () => {
           initializationRef.current = true;
           logger.log('✅ Voice service was already initialized on mount');
         } else {
-          // Auto-initialize on mount
           logger.log('🎤 Auto-initializing voice service on mount...');
           await initializeVoiceService();
         }
@@ -109,6 +107,25 @@ export const useVoice = () => {
     checkVoiceService();
   }, [initializeVoiceService]);
 
+  // CRITICAL FIX: Update listening state from voice service
+  useEffect(() => {
+    const updateStates = () => {
+      if (voiceService) {
+        const state = voiceService.getState();
+        setIsListening(state.isListening);
+        setIsSpeaking(state.isSpeaking);
+      }
+    };
+
+    // Update states periodically
+    const stateInterval = setInterval(updateStates, 1000);
+    
+    return () => {
+      clearInterval(stateInterval);
+    };
+  }, []);
+
+  // CRITICAL FIX: Start listening with roleplay integration
   const startListening = useCallback(async (options = {}) => {
     try {
       setError(null);
@@ -125,23 +142,33 @@ export const useVoice = () => {
       const initialized = await initializeVoiceService();
       if (!initialized) {
         logger.warn('⚠️ Voice service not available - using fallback');
-        // Continue with browser fallback instead of failing
       }
 
-      // Use voice service if available and working
-      if (initialized && voiceService && typeof voiceService.startListening === 'function') {
-        try {
-          const result = await voiceService.startListening({
-            continuous: true,
-            onResult: options.onResult,
-            onInterim: options.onInterim,
-            onError: options.onError
-          });
-          setIsListening(true);
-          return result;
-        } catch (voiceError) {
-          logger.warn('Voice service listening failed, falling back to browser API:', voiceError);
-          // Fall through to browser API fallback
+      // CRITICAL FIX: Use roleplay-aware listening
+      if (currentSession && conversationActive && roleplayHandleUserSpeech) {
+        // Start continuous listening for roleplay
+        voiceService.startContinuousListening(
+          roleplayHandleUserSpeech,
+          options.onSilence
+        );
+        setIsListening(true);
+        return { success: true, mode: 'roleplay' };
+      } else {
+        // Use voice service directly for non-roleplay
+        if (initialized && voiceService && typeof voiceService.startListening === 'function') {
+          try {
+            const result = await voiceService.startListening({
+              continuous: true,
+              onResult: options.onResult,
+              onInterim: options.onInterim,
+              onError: options.onError
+            });
+            setIsListening(true);
+            return result;
+          } catch (voiceError) {
+            logger.warn('Voice service listening failed, falling back to browser API:', voiceError);
+            return await startBrowserListening(options);
+          }
         }
       }
 
@@ -158,7 +185,7 @@ export const useVoice = () => {
       }
       return null;
     }
-  }, [initializeVoiceService]);
+  }, [initializeVoiceService, currentSession, conversationActive, roleplayHandleUserSpeech]);
 
   // Browser fallback listening method
   const startBrowserListening = useCallback(async (options = {}) => {
@@ -179,17 +206,7 @@ export const useVoice = () => {
 
       recognition.onend = () => {
         logger.log('🔚 Browser speech recognition ended (fallback)');
-        
-        // Restart if continuous mode is enabled
-        if (recognition.continuous && !isListening) {
-          try {
-            recognition.start();
-          } catch (error) {
-            logger.warn('Could not restart browser recognition:', error);
-          }
-        } else {
-          setIsListening(false);
-        }
+        setIsListening(false);
       };
 
       recognition.onresult = (event) => {
@@ -204,7 +221,10 @@ export const useVoice = () => {
         });
         
         if (result.isFinal) {
-          if (options.onResult) {
+          // CRITICAL FIX: Send to roleplay if active
+          if (currentSession && conversationActive && roleplayHandleUserSpeech) {
+            roleplayHandleUserSpeech(transcript, confidence);
+          } else if (options.onResult) {
             options.onResult(transcript, confidence);
           }
         } else if (options.onInterim) {
@@ -226,20 +246,21 @@ export const useVoice = () => {
       
       try {
         recognition.start();
+        resolve({ success: true, mode: 'browser' });
       } catch (startError) {
         setIsListening(false);
         reject(startError);
       }
     });
-  }, [isListening]);
+  }, [currentSession, conversationActive, roleplayHandleUserSpeech]);
 
   const stopListening = useCallback(() => {
     try {
       setError(null);
 
       // Stop voice service listening if available
-      if (voiceService && typeof voiceService.stopListening === 'function') {
-        voiceService.stopListening();
+      if (voiceService && typeof voiceService.stopContinuousListening === 'function') {
+        voiceService.stopContinuousListening();
       }
 
       // Stop browser recognition fallback
@@ -260,6 +281,7 @@ export const useVoice = () => {
     }
   }, []);
 
+  // CRITICAL FIX: Speak text with roleplay awareness
   const speakText = useCallback(async (text, options = {}) => {
     try {
       setError(null);
@@ -292,7 +314,7 @@ export const useVoice = () => {
       }
 
       // Fallback to browser speech synthesis
-      return await this.speakWithBrowser(text, options);
+      return await speakWithBrowser(text, options);
 
     } catch (error) {
       logger.error('❌ Speech error:', error);
@@ -344,8 +366,8 @@ export const useVoice = () => {
       setIsSpeaking(false);
 
       // Stop voice service speaking if available
-      if (voiceService && typeof voiceService.stopSpeaking === 'function') {
-        voiceService.stopSpeaking();
+      if (voiceService && typeof voiceService.stopCurrentAudio === 'function') {
+        voiceService.stopCurrentAudio();
       }
 
       // Stop browser synthesis if available
@@ -370,7 +392,8 @@ export const useVoice = () => {
         isListening: isListening,
         isSpeaking: isSpeaking,
         isInitialized: isInitialized,
-        hasAudioContext: false
+        hasAudioContext: false,
+        conversationActive: conversationActive || false
       };
     } catch (error) {
       logger.warn('Error getting voice state:', error);
@@ -378,10 +401,11 @@ export const useVoice = () => {
         isListening: false,
         isSpeaking: false,
         isInitialized: false,
-        hasAudioContext: false
+        hasAudioContext: false,
+        conversationActive: false
       };
     }
-  }, [isListening, isSpeaking, isInitialized]);
+  }, [isListening, isSpeaking, isInitialized, conversationActive]);
 
   const cleanup = useCallback(() => {
     try {
@@ -436,13 +460,18 @@ export const useVoice = () => {
     // Actions
     startListening,
     stopListening,
-    speakText, // Changed from 'speak' to match the component usage
+    speakText,
     stopSpeaking,
     
     // Utilities
     initializeVoiceService,
     getVoiceState,
     cleanup,
+    
+    // Roleplay-specific state
+    conversationActive,
+    currentSession,
+    callState,
     
     // Direct reference to voice service for advanced usage
     voiceService
