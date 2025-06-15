@@ -213,42 +213,49 @@ const FunctionalPhoneInterface = () => {
       continuousListeningRef.current = true;
       logger.log('🎤 Starting continuous listening...');
 
-      const listenContinuously = async () => {
-        if (!continuousListeningRef.current || callState !== 'connected') return;
-
-        try {
-          const result = await startListening({
-            continuous: true,
-            onResult: (transcript, confidence) => {
-              logger.log('📝 Continuous recognition:', transcript);
-              handleContinuousInput(transcript, confidence);
-            },
-            onInterim: (interim) => {
-              // Show interim results for better UX
-              if (interim && interim.length > 3) {
-                setUserSpeechText(interim + '...');
-              }
-            }
-          });
-
-          // Restart if needed
-          if (continuousListeningRef.current && callState === 'connected') {
-            setTimeout(listenContinuously, 100);
+      const result = await startListening({
+        continuous: false, // Changed to false to only listen once
+        onResult: (transcript, confidence) => {
+          logger.log('📝 Speech recognized:', transcript);
+          handleContinuousInput(transcript, confidence);
+          
+          // After processing the result, restart listening if still connected
+          if (callState === 'connected' && !isAISpeaking) {
+            setTimeout(() => {
+              continuousListeningRef.current = false;
+              startContinuousListening();
+            }, 1000); // Wait 1 second before restarting
           }
-        } catch (error) {
-          logger.warn('Continuous listening error:', error);
-          // Retry after a delay
-          if (continuousListeningRef.current && callState === 'connected') {
-            setTimeout(listenContinuously, 1000);
+        },
+        onInterim: (interim) => {
+          // Show interim results for better UX
+          if (interim && interim.length > 3) {
+            setUserSpeechText(interim + '...');
+          }
+        },
+        onError: (error) => {
+          logger.error('Speech recognition error:', error);
+          // Restart listening after error if still connected
+          if (callState === 'connected' && !isAISpeaking) {
+            setTimeout(() => {
+              continuousListeningRef.current = false;
+              startContinuousListening();
+            }, 1000);
           }
         }
-      };
+      });
 
-      listenContinuously();
     } catch (error) {
       logger.error('Failed to start continuous listening:', error);
+      // Restart listening after error if still connected
+      if (callState === 'connected' && !isAISpeaking) {
+        setTimeout(() => {
+          continuousListeningRef.current = false;
+          startContinuousListening();
+        }, 1000);
+      }
     }
-  }, [voiceServiceAvailable, callState, startListening]);
+  }, [voiceServiceAvailable, callState, startListening, isAISpeaking]);
 
   // Stop continuous listening
   const stopContinuousListening = useCallback(() => {
@@ -267,11 +274,8 @@ const FunctionalPhoneInterface = () => {
     // Set the recognized text
     setUserSpeechText(transcript);
 
-    // Process after a short delay to allow for more speech
-    clearTimeout(autoMicTimeout.current);
-    autoMicTimeout.current = setTimeout(() => {
-      processUserInput(transcript, confidence);
-    }, 1000); // Wait 1 second after speech ends
+    // Process immediately since we're not using continuous mode anymore
+    processUserInput(transcript, confidence);
   }, [isProcessing, isAISpeaking]);
 
   // Handle user interruption during AI speech
