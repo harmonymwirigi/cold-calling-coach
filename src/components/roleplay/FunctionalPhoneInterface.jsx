@@ -207,50 +207,40 @@ const FunctionalPhoneInterface = () => {
 
   // Start continuous listening for natural conversation
   const startContinuousListening = useCallback(async () => {
-    if (!voiceServiceAvailable || continuousListeningRef.current) return;
+    if (!voiceServiceAvailable || continuousListeningRef.current || isAISpeaking) return;
 
     try {
       continuousListeningRef.current = true;
-      logger.log('🎤 Starting continuous listening...');
+      logger.log('🎤 Starting speech recognition...');
 
       const result = await startListening({
-        continuous: false, // Changed to false to only listen once
+        continuous: false,
         onResult: (transcript, confidence) => {
           logger.log('📝 Speech recognized:', transcript);
           handleContinuousInput(transcript, confidence);
-          
-          // After processing the result, restart listening if still connected
-          if (callState === 'connected' && !isAISpeaking) {
-            setTimeout(() => {
-              continuousListeningRef.current = false;
-              startContinuousListening();
-            }, 1000); // Wait 1 second before restarting
-          }
         },
         onInterim: (interim) => {
-          // Show interim results for better UX
           if (interim && interim.length > 3) {
             setUserSpeechText(interim + '...');
-          }
-        },
-        onError: (error) => {
-          logger.error('Speech recognition error:', error);
-          // Restart listening after error if still connected
-          if (callState === 'connected' && !isAISpeaking) {
-            setTimeout(() => {
-              continuousListeningRef.current = false;
-              startContinuousListening();
-            }, 1000);
           }
         }
       });
 
+      // After processing is complete and AI has finished speaking, restart listening
+      if (callState === 'connected' && !isAISpeaking) {
+        continuousListeningRef.current = false;
+        setTimeout(() => {
+          startContinuousListening();
+        }, 1000);
+      }
+
     } catch (error) {
-      logger.error('Failed to start continuous listening:', error);
-      // Restart listening after error if still connected
+      logger.error('Failed to start speech recognition:', error);
+      continuousListeningRef.current = false;
+      
+      // Only retry if still connected and AI is not speaking
       if (callState === 'connected' && !isAISpeaking) {
         setTimeout(() => {
-          continuousListeningRef.current = false;
           startContinuousListening();
         }, 1000);
       }
@@ -274,7 +264,7 @@ const FunctionalPhoneInterface = () => {
     // Set the recognized text
     setUserSpeechText(transcript);
 
-    // Process immediately since we're not using continuous mode anymore
+    // Process immediately
     processUserInput(transcript, confidence);
   }, [isProcessing, isAISpeaking]);
 
@@ -305,30 +295,34 @@ const FunctionalPhoneInterface = () => {
 
       const aiResult = await handleUserResponse(transcript);
       
-     // In processUserInput function, after getting AI response:
-if (aiResult?.success) {
-  const aiResponse = aiResult.response;
-  setCurrentMessage(aiResponse);
-  setEvaluation(aiResult.evaluation);
-  addToConversationHistory('ai', aiResponse);
+      if (aiResult?.success) {
+        const aiResponse = aiResult.response;
+        setCurrentMessage(aiResponse);
+        setEvaluation(aiResult.evaluation);
+        addToConversationHistory('ai', aiResponse);
 
-  // Make sure AI speaks the response
-  if (!isMuted && aiResponse && voiceServiceAvailable) {
-    setIsAISpeaking(true);
-    try {
-      // This is the key part - actually speak!
-      await voiceService.speakText(aiResponse);
-      logger.log('✅ AI spoke response:', aiResponse);
-    } catch (speechError) {
-      logger.error('❌ AI speech failed:', speechError);
-    } finally {
-      setIsAISpeaking(false);
-    }
-  }
-}
+        // Make sure AI speaks the response
+        if (!isMuted && aiResponse && voiceServiceAvailable) {
+          setIsAISpeaking(true);
+          try {
+            await voiceService.speakText(aiResponse);
+            logger.log('✅ AI spoke response:', aiResponse);
+          } catch (speechError) {
+            logger.error('❌ AI speech failed:', speechError);
+          } finally {
+            setIsAISpeaking(false);
+            // After AI finishes speaking, restart listening
+            continuousListeningRef.current = false;
+            startContinuousListening();
+          }
+        }
+      }
     } catch (error) {
       logger.error('❌ Error processing user input:', error);
       setError('Failed to process your response. Please try again.');
+      // Restart listening after error
+      continuousListeningRef.current = false;
+      startContinuousListening();
     }
   };
 

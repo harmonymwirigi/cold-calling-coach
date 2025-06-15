@@ -214,6 +214,7 @@ export class VoiceService {
 
           // Only resolve on final results
           if (result.isFinal) {
+            this.stopListening(); // Stop listening after getting final result
             resolve({
               transcript: transcript.trim(),
               confidence,
@@ -246,15 +247,7 @@ export class VoiceService {
         this.recognition.onend = () => {
           logger.log('🔚 Speech recognition ended');
           this.isListening = false;
-          
-          // Restart if continuous mode is enabled
-          if (this.recognition.continuous && !this.isListening) {
-            try {
-              this.recognition.start();
-            } catch (error) {
-              logger.warn('Could not restart recognition:', error);
-            }
-          }
+          clearTimeout(timeout);
         };
 
         try {
@@ -278,11 +271,11 @@ export class VoiceService {
     if (this.recognition && this.isListening) {
       try {
         this.recognition.stop();
+        this.isListening = false;
       } catch (error) {
         logger.warn('⚠️ Error stopping recognition:', error);
       }
     }
-    this.isListening = false;
   }
 
   // Speak text using the configured provider
