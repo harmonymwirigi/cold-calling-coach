@@ -568,128 +568,86 @@ const UnifiedPhoneInterface = () => {
           
 {/* DEBUG SECTION - Add this for testing */}
 
-{/* ENHANCED DEBUG SECTION */}
-{ callState === 'connected' && (
+{/* DEBUG SECTION - Add this for testing */}
+{callState === 'connected' && (
   <div className="mt-6 bg-yellow-600/20 rounded-lg p-4 border border-yellow-500">
-    <h3 className="text-yellow-300 text-xs font-bold mb-3 text-center">🐛 ENHANCED DEBUG CONTROLS</h3>
+    <h3 className="text-yellow-300 text-xs font-bold mb-3 text-center">🐛 DEBUG CONTROLS</h3>
     <div className="space-y-2">
-      
-      {/* Simple Manual Test */}
       <button
         onClick={() => {
-          console.log('🧪 [DEBUG] === MANUAL TEST START ===');
-          console.log('🧪 [DEBUG] Current session:', !!currentSession);
-          console.log('🧪 [DEBUG] Call state:', callState);
-          console.log('🧪 [DEBUG] Is processing:', isProcessing);
-          console.log('🧪 [DEBUG] Calling handleUserResponse...');
-          handleUserResponse("Hello Sarah, this is John from TechCorp").then(() => {
-            console.log('🧪 [DEBUG] === MANUAL TEST COMPLETE ===');
-          }).catch((error) => {
-            console.error('🧪 [DEBUG] === MANUAL TEST FAILED ===', error);
-          });
+          console.log('🧪 Testing AI response flow...');
+          handleUserResponse("Hello Sarah, this is John from TechCorp. How are you today?");
         }}
-        className="w-full bg-yellow-500 text-black py-2 px-3 rounded text-xs hover:bg-yellow-400 transition-colors font-bold"
+        className="w-full bg-yellow-500 text-black py-2 px-3 rounded text-xs hover:bg-yellow-400 transition-colors"
         disabled={isProcessing}
       >
-        🧪 MANUAL AI RESPONSE TEST
+        🧪 Test AI Response Flow
       </button>
-
-      {/* State Logger */}
+      
       <button
         onClick={() => {
-          console.log('📊 [DEBUG] === CURRENT STATE ===');
-          console.log('📊 Session ID:', currentSession?.id);
-          console.log('📊 Call State:', callState);
-          console.log('📊 Is Processing:', isProcessing);
-          console.log('📊 Is Hanging Up:', isHangingUp);
-          console.log('📊 Conversation Length:', conversationHistory.length);
-          console.log('📊 Current Message:', currentMessage);
-          console.log('📊 Session Stats:', getSessionStats());
-          console.log('📊 [DEBUG] === END STATE ===');
+          console.log('🧪 Current session state:', {
+            callState,
+            isProcessing,
+            hasSession: !!currentSession,
+            conversationLength: conversationHistory.length,
+            currentStage: getSessionStats()?.currentStage,
+            isEnding: isHangingUp
+          });
         }}
         className="w-full bg-blue-500 text-white py-2 px-3 rounded text-xs hover:bg-blue-400 transition-colors"
       >
-        📊 LOG FULL STATE
+        📊 Log Session State
       </button>
       
-      {/* Voice Service State */}
       <button
         onClick={async () => {
-          console.log('🎤 [DEBUG] === VOICE SERVICE STATE ===');
+          console.log('🧪 Testing voice service state...');
           try {
             const voiceState = await getMicrophoneState();
-            console.log('🎤 Voice initialized:', voiceState.isInitialized);
-            console.log('🎤 Is listening:', voiceState.isListening);
-            console.log('🎤 Is speaking:', voiceState.isSpeaking);
-            console.log('🎤 Conversation active:', voiceState.conversationActive);
-            console.log('🎤 Processing result:', voiceState.isProcessingResult);
+            console.log('🎤 Voice state:', voiceState);
+            console.log('🎤 Is conversation active:', voiceState.conversationActive);
+            console.log('🎤 Is processing result:', voiceState.isProcessingResult);
           } catch (error) {
-            console.error('🎤 [DEBUG] Error checking voice state:', error);
+            console.error('❌ Error checking voice state:', error);
           }
-          console.log('🎤 [DEBUG] === END VOICE STATE ===');
         }}
         className="w-full bg-green-500 text-white py-2 px-3 rounded text-xs hover:bg-green-400 transition-colors"
       >
-        🎤 CHECK VOICE SERVICE
+        🎤 Check Voice State
       </button>
 
-      {/* Direct Speech Test */}
       <button
         onClick={async () => {
-          console.log('🎙️ [DEBUG] === DIRECT SPEECH TEST ===');
+          console.log('🧪 Testing simple AI response...');
+          const testResponses = [
+            "Who is this?",
+            "What's this about?", 
+            "I'm not interested.",
+            "How much does this cost?"
+          ];
+          const randomResponse = testResponses[Math.floor(Math.random() * testResponses.length)];
+          console.log('🤖 Test response:', randomResponse);
+          
+          // Test speaking directly
           try {
             const { voiceService } = await import('../../services/voiceService');
-            const testMessage = "This is a test message from the debug controls.";
-            console.log('🎙️ Speaking test message:', testMessage);
-            await voiceService.speakText(testMessage);
-            console.log('🎙️ Test speech completed successfully');
+            await voiceService.speakText(randomResponse);
+            console.log('✅ Test speech completed');
           } catch (error) {
-            console.error('🎙️ [DEBUG] Direct speech test failed:', error);
+            console.error('❌ Test speech failed:', error);
           }
-          console.log('🎙️ [DEBUG] === END SPEECH TEST ===');
         }}
         className="w-full bg-purple-500 text-white py-2 px-3 rounded text-xs hover:bg-purple-400 transition-colors"
         disabled={isProcessing}
       >
-        🎙️ TEST DIRECT SPEECH
+        🎙️ Test AI Speech
       </button>
-
-      {/* Force Processing Toggle */}
-      <button
-        onClick={() => {
-          console.log('⚡ [DEBUG] Force toggling processing state');
-          console.log('⚡ Current isProcessing:', isProcessing);
-          // This is just for debugging - don't use in production
-          setIsProcessing(!isProcessing);
-          console.log('⚡ New isProcessing:', !isProcessing);
-        }}
-        className="w-full bg-red-500 text-white py-2 px-3 rounded text-xs hover:bg-red-400 transition-colors"
-      >
-        ⚡ TOGGLE PROCESSING STATE
-      </button>
-
-      {/* Conversation History */}
-      <button
-        onClick={() => {
-          console.log('💬 [DEBUG] === CONVERSATION HISTORY ===');
-          conversationHistory.forEach((entry, index) => {
-            console.log(`💬 ${index}: [${entry.speaker}] ${entry.message}`);
-          });
-          console.log('💬 Total entries:', conversationHistory.length);
-          console.log('💬 [DEBUG] === END CONVERSATION ===');
-        }}
-        className="w-full bg-indigo-500 text-white py-2 px-3 rounded text-xs hover:bg-indigo-400 transition-colors"
-      >
-        💬 LOG CONVERSATION
-      </button>
-
     </div>
     
     <div className="mt-3 text-yellow-200 text-xs text-center">
-      <p><strong>Live Status:</strong></p>
       <p>Exchanges: {stats?.exchanges || 0} | Stage: {stats?.currentStage}</p>
-      <p>Processing: <span className={isProcessing ? 'text-red-300' : 'text-green-300'}>{isProcessing ? 'YES' : 'NO'}</span> | Hanging Up: {isHangingUp ? 'YES' : 'NO'}</p>
-      <p>Message: "{currentMessage ? currentMessage.substring(0, 30) + '...' : 'None'}"</p>
+      <p>Processing: {isProcessing ? 'YES' : 'NO'} | Hanging Up: {isHangingUp ? 'YES' : 'NO'}</p>
     </div>
   </div>
 )}
