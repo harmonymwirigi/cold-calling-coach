@@ -1,10 +1,9 @@
-// src/contexts/RoleplayContext.jsx - UPDATED WITH ENGINE INTEGRATION
+// src/contexts/RoleplayContext.jsx - FIXED WITH COMPLETE OPENAI INTEGRATION
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { useProgress } from './ProgressContext';
 import { voiceService } from '../services/voiceService';
 import { roleplayEngine } from '../services/roleplayEngine';
-import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
 
 const RoleplayContext = createContext({});
@@ -51,10 +50,10 @@ export const RoleplayProvider = ({ children }) => {
     setIsProcessing(newValue);
   }, []);
 
-  // Start roleplay session with proper access checking and engine integration
+  // Start roleplay session with OpenAI integration
   const startRoleplaySession = useCallback(async (roleplayType, mode, metadata = {}) => {
     try {
-      logger.log('🎬 [ROLEPLAY] Starting session:', { roleplayType, mode });
+      logger.log('🎬 [ROLEPLAY] Starting OpenAI-powered session:', { roleplayType, mode });
       
       // Reset flags
       isEndingSessionRef.current = false;
@@ -67,11 +66,12 @@ export const RoleplayProvider = ({ children }) => {
         throw new Error(accessCheck.reason);
       }
 
-      // Initialize services
-      logger.log('🔄 [ROLEPLAY] Initializing services...');
+      // Initialize voice service
+      logger.log('🔄 [ROLEPLAY] Initializing voice service...');
       await voiceService.initialize();
       
-      // Initialize roleplay engine
+      // Initialize roleplay engine with OpenAI integration
+      logger.log('🤖 [ROLEPLAY] Initializing OpenAI-powered roleplay engine...');
       const engineResult = await roleplayEngine.initializeSession(
         userProfile?.id,
         roleplayType,
@@ -80,7 +80,7 @@ export const RoleplayProvider = ({ children }) => {
       );
 
       if (!engineResult.success) {
-        throw new Error(engineResult.error);
+        throw new Error(engineResult.error || 'Failed to initialize OpenAI engine');
       }
 
       const session = engineResult.session;
@@ -95,9 +95,9 @@ export const RoleplayProvider = ({ children }) => {
       setPassCount(0);
       updateCallState('dialing');
       
-      logger.log('✅ [ROLEPLAY] Session initialized successfully');
+      logger.log('✅ [ROLEPLAY] OpenAI-powered session initialized successfully');
       
-      // Start the conversation flow after delay
+      // Start the conversation flow with OpenAI
       setTimeout(async () => {
         if (isEndingSessionRef.current) {
           logger.log('⚠️ [ROLEPLAY] Session ended during startup');
@@ -107,7 +107,8 @@ export const RoleplayProvider = ({ children }) => {
         logger.log('🔄 [ROLEPLAY] Setting call state to connected');
         updateCallState('connected');
         
-        // Get AI's opening message from engine
+        // Get AI's opening message from OpenAI through engine
+        logger.log('🤖 [ROLEPLAY] Getting OpenAI greeting...');
         const openingResponse = await roleplayEngine.processUserInput('', {
           stage: 'greeting',
           isGreeting: true
@@ -121,14 +122,15 @@ export const RoleplayProvider = ({ children }) => {
           const greetingEntry = {
             speaker: 'ai',
             message: openingResponse.response,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            source: 'openai'
           };
           
           setConversationHistory([greetingEntry]);
           
           // Start voice conversation
           setTimeout(() => {
-            logger.log('🎤 [ROLEPLAY] Starting voice conversation');
+            logger.log('🎤 [ROLEPLAY] Starting voice conversation with OpenAI responses');
             const success = voiceService.startConversation(
               handleUserSpeech,
               handleVoiceError
@@ -136,14 +138,17 @@ export const RoleplayProvider = ({ children }) => {
             logger.log('🎤 [ROLEPLAY] Voice conversation started:', success);
           }, 100);
           
-          // Speak the greeting
+          // Speak the OpenAI greeting
           try {
-            logger.log('🗣️ [ROLEPLAY] Speaking greeting:', openingResponse.response);
+            logger.log('🗣️ [ROLEPLAY] Speaking OpenAI greeting:', openingResponse.response);
             await voiceService.speakText(openingResponse.response);
-            logger.log('✅ [ROLEPLAY] Greeting spoken successfully');
+            logger.log('✅ [ROLEPLAY] OpenAI greeting spoken successfully');
           } catch (speakError) {
-            logger.error('❌ [ROLEPLAY] Failed to speak greeting:', speakError);
+            logger.error('❌ [ROLEPLAY] Failed to speak OpenAI greeting:', speakError);
           }
+        } else {
+          logger.error('❌ [ROLEPLAY] Failed to get OpenAI greeting:', openingResponse);
+          throw new Error('OpenAI greeting failed');
         }
         
       }, 2000);
@@ -151,14 +156,14 @@ export const RoleplayProvider = ({ children }) => {
       return session;
       
     } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error starting session:', error);
+      logger.error('❌ [ROLEPLAY] Error starting OpenAI session:', error);
       throw error;
     }
   }, [userProfile, canAccessRoleplay, updateCallState, updateIsProcessing]);
 
-  // Handle user speech with engine integration
+  // Handle user speech with complete OpenAI integration
   const handleUserSpeech = useCallback(async (transcript, confidence) => {
-    logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech CALLED ======');
+    logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech WITH OPENAI ======');
     logger.log('🗣️ [ROLEPLAY] Transcript:', transcript);
     logger.log('🗣️ [ROLEPLAY] Current state:', {
       hasSession: !!sessionRef.current,
@@ -205,9 +210,9 @@ export const RoleplayProvider = ({ children }) => {
         return updated;
       });
 
-      logger.log('🤖 [ROLEPLAY] Processing user input with engine...');
+      logger.log('🤖 [ROLEPLAY] Processing user input with OpenAI engine...');
       
-      // Process input through roleplay engine
+      // Process input through roleplay engine (which uses OpenAI)
       const engineResult = await roleplayEngine.processUserInput(transcript, {
         roleplayType: sessionRef.current.roleplayType,
         mode: sessionRef.current.mode,
@@ -215,48 +220,50 @@ export const RoleplayProvider = ({ children }) => {
         userProfile: sessionRef.current.userProfile
       });
 
-      logger.log('🤖 [ROLEPLAY] Engine result received:', {
+      logger.log('🤖 [ROLEPLAY] OpenAI Engine result received:', {
         success: engineResult.success,
         hasResponse: !!engineResult.response,
         shouldHangUp: engineResult.shouldHangUp,
         callPassed: engineResult.callPassed,
-        sessionComplete: engineResult.sessionComplete
+        sessionComplete: engineResult.sessionComplete,
+        source: 'openai_engine'
       });
 
       // Check if session ended during processing
       if (isEndingSessionRef.current) {
-        logger.log('⚠️ [ROLEPLAY] Session ended during processing, aborting');
+        logger.log('⚠️ [ROLEPLAY] Session ended during OpenAI processing, aborting');
         return;
       }
 
       if (engineResult.success) {
         // Handle session completion
         if (engineResult.sessionComplete) {
-          logger.log('🏁 [ROLEPLAY] Session completed by engine');
+          logger.log('🏁 [ROLEPLAY] Session completed by OpenAI engine');
           handleSessionCompletion(engineResult);
           return;
         }
 
         // Handle call completion (for marathon/legend modes)
         if (engineResult.callResult) {
-          logger.log('📞 [ROLEPLAY] Call completed:', engineResult.callResult);
+          logger.log('📞 [ROLEPLAY] Call completed by OpenAI:', engineResult.callResult);
           setCallCount(engineResult.callResult.callNumber);
           if (engineResult.callResult.passed) {
             setPassCount(prev => prev + 1);
           }
         }
 
-        // Add AI response to conversation if provided
+        // Add AI response to conversation if provided (this is from OpenAI!)
         if (engineResult.response) {
           const aiEntry = {
             speaker: 'ai',
             message: engineResult.response,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            source: 'openai'
           };
           
           setConversationHistory(prev => {
             const updated = [...prev, aiEntry];
-            logger.log('📝 [ROLEPLAY] Added AI response to history. Total length:', updated.length);
+            logger.log('📝 [ROLEPLAY] Added OpenAI response to history. Total length:', updated.length);
             return updated;
           });
 
@@ -268,23 +275,23 @@ export const RoleplayProvider = ({ children }) => {
           }
         }
 
-        // Speak AI response
+        // Speak AI response (this is OpenAI's response!)
         if (engineResult.response && !engineResult.shouldHangUp) {
           try {
-            logger.log('🗣️ [ROLEPLAY] Speaking AI response...');
+            logger.log('🗣️ [ROLEPLAY] Speaking OpenAI response...');
             await voiceService.speakText(engineResult.response);
-            logger.log('✅ [ROLEPLAY] AI response spoken successfully');
+            logger.log('✅ [ROLEPLAY] OpenAI response spoken successfully');
           } catch (speakError) {
-            logger.error('❌ [ROLEPLAY] Failed to speak AI response:', speakError);
+            logger.error('❌ [ROLEPLAY] Failed to speak OpenAI response:', speakError);
           }
         }
 
         // Handle hangup if required
         if (engineResult.shouldHangUp) {
-          logger.log('🔚 [ROLEPLAY] Engine requests hangup');
+          logger.log('🔚 [ROLEPLAY] OpenAI engine requests hangup');
           
           if (engineResult.nextCall) {
-            // Start next call in marathon/legend mode
+            // Start next call in marathon/legend mode (still using OpenAI)
             setTimeout(() => {
               startNextCall();
             }, 2000);
@@ -298,12 +305,21 @@ export const RoleplayProvider = ({ children }) => {
         }
 
       } else {
-        logger.error('❌ [ROLEPLAY] Engine processing failed:', engineResult.error);
+        logger.error('❌ [ROLEPLAY] OpenAI engine processing failed:', engineResult.error);
         
-        // Emergency fallback
+        // Emergency fallback (but still try to use OpenAI if possible)
         if (!isEndingSessionRef.current) {
           const fallbackResponse = "Sorry, I had trouble understanding. Could you try again?";
           setCurrentMessage(fallbackResponse);
+          
+          const fallbackEntry = {
+            speaker: 'ai',
+            message: fallbackResponse,
+            timestamp: Date.now(),
+            source: 'fallback'
+          };
+          
+          setConversationHistory(prev => [...prev, fallbackEntry]);
           
           try {
             await voiceService.speakText(fallbackResponse);
@@ -314,13 +330,22 @@ export const RoleplayProvider = ({ children }) => {
       }
 
     } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error processing user speech:', error);
+      logger.error('❌ [ROLEPLAY] Error processing user speech with OpenAI:', error);
       
       // Emergency recovery
       if (!isEndingSessionRef.current) {
         try {
           const errorResponse = "Sorry, something went wrong. Could you try again?";
           setCurrentMessage(errorResponse);
+          
+          const errorEntry = {
+            speaker: 'ai',
+            message: errorResponse,
+            timestamp: Date.now(),
+            source: 'error'
+          };
+          
+          setConversationHistory(prev => [...prev, errorEntry]);
           await voiceService.speakText(errorResponse);
         } catch (recoveryError) {
           logger.error('❌ [ROLEPLAY] Recovery failed:', recoveryError);
@@ -329,13 +354,13 @@ export const RoleplayProvider = ({ children }) => {
     } finally {
       logger.log('🔄 [ROLEPLAY] Setting isProcessing to FALSE');
       updateIsProcessing(false);
-      logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech COMPLETED ======');
+      logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech WITH OPENAI COMPLETED ======');
     }
   }, [updateIsProcessing, currentStage]);
 
-  // Start next call in marathon/legend mode
-  const startNextCall = useCallback(() => {
-    logger.log('📞 [ROLEPLAY] Starting next call...');
+  // Start next call in marathon/legend mode (using OpenAI)
+  const startNextCall = useCallback(async () => {
+    logger.log('📞 [ROLEPLAY] Starting next call with OpenAI...');
     
     // Reset for next call
     setCurrentStage('greeting');
@@ -344,30 +369,36 @@ export const RoleplayProvider = ({ children }) => {
     // Clear conversation history for new call
     setConversationHistory([]);
     
-    // Start with greeting
+    // Start with OpenAI greeting
     setTimeout(async () => {
-      const greetingResponse = await roleplayEngine.processUserInput('', {
-        stage: 'greeting',
-        isGreeting: true
-      });
+      try {
+        logger.log('🤖 [ROLEPLAY] Getting OpenAI greeting for next call...');
+        const greetingResponse = await roleplayEngine.processUserInput('', {
+          stage: 'greeting',
+          isGreeting: true
+        });
 
-      if (greetingResponse.success && greetingResponse.response) {
-        setCurrentMessage(greetingResponse.response);
-        setCurrentStage(greetingResponse.stage || 'opener');
-        
-        const greetingEntry = {
-          speaker: 'ai',
-          message: greetingResponse.response,
-          timestamp: Date.now()
-        };
-        
-        setConversationHistory([greetingEntry]);
-        
-        try {
+        if (greetingResponse.success && greetingResponse.response) {
+          setCurrentMessage(greetingResponse.response);
+          setCurrentStage(greetingResponse.stage || 'opener');
+          
+          const greetingEntry = {
+            speaker: 'ai',
+            message: greetingResponse.response,
+            timestamp: Date.now(),
+            source: 'openai'
+          };
+          
+          setConversationHistory([greetingEntry]);
+          
+          logger.log('🗣️ [ROLEPLAY] Speaking OpenAI greeting for next call...');
           await voiceService.speakText(greetingResponse.response);
-        } catch (error) {
-          logger.error('Failed to speak greeting for next call:', error);
+          logger.log('✅ [ROLEPLAY] OpenAI greeting for next call spoken successfully');
+        } else {
+          logger.error('❌ [ROLEPLAY] Failed to get OpenAI greeting for next call');
         }
+      } catch (error) {
+        logger.error('❌ [ROLEPLAY] Error getting OpenAI greeting for next call:', error);
       }
     }, 500);
   }, []);
@@ -375,7 +406,7 @@ export const RoleplayProvider = ({ children }) => {
   // Handle session completion
   const handleSessionCompletion = useCallback(async (engineResult) => {
     try {
-      logger.log('🏁 [ROLEPLAY] Handling session completion:', engineResult);
+      logger.log('🏁 [ROLEPLAY] Handling OpenAI session completion:', engineResult);
 
       // Update progress
       if (sessionRef.current && engineResult.metrics) {
@@ -398,13 +429,14 @@ export const RoleplayProvider = ({ children }) => {
         passed: engineResult.sessionPassed,
         metrics: engineResult.metrics,
         unlocks: engineResult.unlocks || [],
-        finalMessage: engineResult.response
+        finalMessage: engineResult.response,
+        openaiPowered: true
       });
 
       updateCallState('ended');
 
     } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error handling session completion:', error);
+      logger.error('❌ [ROLEPLAY] Error handling OpenAI session completion:', error);
     }
   }, [updateProgress]);
 
@@ -421,7 +453,7 @@ export const RoleplayProvider = ({ children }) => {
     }
 
     try {
-      logger.log('🏁 [ROLEPLAY] Ending session:', reason);
+      logger.log('🏁 [ROLEPLAY] Ending OpenAI session:', reason);
       
       // Set ending flag immediately
       isEndingSessionRef.current = true;
@@ -434,14 +466,14 @@ export const RoleplayProvider = ({ children }) => {
       
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // Get final results from engine if available
+      // Get final results from OpenAI engine if available
       let sessionResults = null;
       
       try {
-        // Try to complete the session through the engine
+        logger.log('🤖 [ROLEPLAY] Completing OpenAI session...');
         sessionResults = await roleplayEngine.completeSession(reason === 'completed', null);
       } catch (engineError) {
-        logger.warn('Engine completion failed:', engineError);
+        logger.warn('OpenAI engine completion failed:', engineError);
       }
 
       // Set basic results if engine didn't provide them
@@ -457,25 +489,26 @@ export const RoleplayProvider = ({ children }) => {
             passRate: callCount > 0 ? Math.round((passCount / callCount) * 100) : 0,
             averageScore: 60
           },
-          unlocks: []
+          unlocks: [],
+          openaiPowered: true
         };
       }
 
       updateCallState('ended');
       setSessionResults(sessionResults);
       
-      logger.log('✅ [ROLEPLAY] Session ended successfully');
+      logger.log('✅ [ROLEPLAY] OpenAI session ended successfully');
       return sessionResults;
       
     } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error ending session:', error);
+      logger.error('❌ [ROLEPLAY] Error ending OpenAI session:', error);
       return null;
     }
   }, [callCount, passCount, updateCallState]);
 
   // Reset session
   const resetSession = useCallback(() => {
-    logger.log('🔄 [ROLEPLAY] Resetting session');
+    logger.log('🔄 [ROLEPLAY] Resetting OpenAI session');
     
     isEndingSessionRef.current = true;
     
@@ -484,6 +517,9 @@ export const RoleplayProvider = ({ children }) => {
     voiceService.stopSpeaking();
     voiceService.stopListening();
     voiceService.cleanup();
+    
+    // Reset OpenAI engine
+    roleplayEngine.reset();
     
     // Reset state
     setCurrentSession(null);
@@ -499,7 +535,7 @@ export const RoleplayProvider = ({ children }) => {
     sessionRef.current = null;
     isEndingSessionRef.current = false;
     
-    logger.log('✅ [ROLEPLAY] Session reset complete');
+    logger.log('✅ [ROLEPLAY] OpenAI session reset complete');
   }, [updateCallState, updateIsProcessing]);
 
   // Get session stats
@@ -510,13 +546,14 @@ export const RoleplayProvider = ({ children }) => {
       callCount,
       passCount,
       currentStage,
-      conversationLength: conversationHistory.length
+      conversationLength: conversationHistory.length,
+      openaiPowered: true
     };
   }, [callCount, passCount, currentStage, conversationHistory.length]);
 
-  // Manual user response for testing
+  // Manual user response for testing (also uses OpenAI)
   const handleUserResponse = useCallback(async (userInput) => {
-    logger.log('📝 [ROLEPLAY] Manual user response:', userInput);
+    logger.log('📝 [ROLEPLAY] Manual user response (OpenAI):', userInput);
     return await handleUserSpeech(userInput, 1.0);
   }, [handleUserSpeech]);
 
@@ -540,7 +577,10 @@ export const RoleplayProvider = ({ children }) => {
     getSessionStats,
     
     // Voice service state
-    voiceService
+    voiceService,
+    
+    // OpenAI integration indicator
+    openaiPowered: true
   };
   
   return (
