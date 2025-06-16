@@ -1,8 +1,7 @@
-// src/pages/Roleplay.jsx - UPDATED WITH MOBILE DETECTION
+// src/pages/Roleplay.jsx - CLEAN ENTRY POINT
 import React, { useState, useEffect } from 'react';
 import { useParams, Navigate } from 'react-router-dom';
-import FixedPhoneInterface from '../components/roleplay/FixedPhoneInterface';
-import MobilePhoneInterface from '../components/roleplay/MobilePhoneInterface';
+import UnifiedPhoneInterface from '../components/roleplay/UnifiedPhoneInterface';
 import { useAuth } from '../contexts/AuthContext';
 import { useProgress } from '../contexts/ProgressContext';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
@@ -13,43 +12,10 @@ const Roleplay = () => {
   const { userProfile, loading: authLoading } = useAuth();
   const { getRoleplayAccess, loading: progressLoading } = useProgress();
   
-  // Mobile detection state
-  const [isMobile, setIsMobile] = useState(false);
-  const [deviceDetected, setDeviceDetected] = useState(false);
+  const [validationError, setValidationError] = useState(null);
+  const [isValidating, setIsValidating] = useState(true);
 
-  // Detect mobile device
-  useEffect(() => {
-    const detectMobile = () => {
-      const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-      const mobileCheck = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase());
-      
-      // Additional checks for mobile behavior
-      const screenCheck = window.innerWidth <= 768;
-      const touchCheck = 'ontouchstart' in window;
-      
-      const isMobileDevice = mobileCheck || (screenCheck && touchCheck);
-      
-      setIsMobile(isMobileDevice);
-      setDeviceDetected(true);
-      
-      logger.log(`📱 Device detection: ${isMobileDevice ? 'MOBILE' : 'DESKTOP'}`, {
-        userAgent: mobileCheck,
-        screen: screenCheck,
-        touch: touchCheck,
-        width: window.innerWidth
-      });
-    };
-
-    detectMobile();
-    
-    // Re-detect on window resize
-    window.addEventListener('resize', detectMobile);
-    
-    return () => {
-      window.removeEventListener('resize', detectMobile);
-    };
-  }, []);
-
+  // Valid roleplay types and modes
   const validRoleplayTypes = [
     'opener_practice',
     'pitch_practice', 
@@ -60,31 +26,76 @@ const Roleplay = () => {
 
   const validModes = ['practice', 'marathon', 'legend'];
 
-  // Show loading while detecting device or loading auth/progress
-  if (!deviceDetected || authLoading || progressLoading) {
+  // Validate parameters and access
+  useEffect(() => {
+    const validateAccess = async () => {
+      try {
+        setIsValidating(true);
+        setValidationError(null);
+
+        // Wait for auth and progress to load
+        if (authLoading || progressLoading) {
+          return;
+        }
+
+        // Check if user is authenticated
+        if (!userProfile) {
+          logger.warn('User not authenticated for roleplay');
+          return; // Will redirect to login
+        }
+
+        // Validate roleplay type and mode
+        if (!validRoleplayTypes.includes(type)) {
+          throw new Error(`Invalid roleplay type: ${type}`);
+        }
+
+        if (!validModes.includes(mode)) {
+          throw new Error(`Invalid mode: ${mode}`);
+        }
+
+        // Check access permissions
+        const access = getRoleplayAccess(type);
+        if (!access?.unlocked) {
+          throw new Error(access?.reason || 'You need to unlock this roleplay first.');
+        }
+
+        logger.log('✅ Roleplay access validated:', { type, mode, access });
+
+      } catch (error) {
+        logger.error('❌ Roleplay validation failed:', error);
+        setValidationError(error.message);
+      } finally {
+        setIsValidating(false);
+      }
+    };
+
+    validateAccess();
+  }, [type, mode, userProfile, authLoading, progressLoading, getRoleplayAccess]);
+
+  // Show loading while validating
+  if (authLoading || progressLoading || isValidating) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 to-blue-900 flex items-center justify-center">
         <div className="text-center text-white">
           <LoadingSpinner size="large" color="white" />
           <p className="mt-4 text-blue-200">
-            {!deviceDetected ? 'Detecting device...' : 'Loading roleplay...'}
+            {authLoading ? 'Checking authentication...' : 
+             progressLoading ? 'Loading progress...' : 
+             'Validating access...'}
           </p>
         </div>
       </div>
     );
   }
 
+  // Redirect to login if not authenticated
   if (!userProfile) {
+    logger.log('Redirecting to login - user not authenticated');
     return <Navigate to="/login" replace />;
   }
 
-  if (!validRoleplayTypes.includes(type) || !validModes.includes(mode)) {
-    logger.error('Invalid roleplay parameters:', { type, mode });
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  const access = getRoleplayAccess(type);
-  if (!access?.unlocked) {
+  // Show validation error
+  if (validationError) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 to-blue-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl p-8 max-w-md w-full text-center">
@@ -95,82 +106,37 @@ const Roleplay = () => {
             Access Denied
           </h2>
           <p className="text-gray-600 mb-4">
-            {access?.reason || 'You need to unlock this roleplay first.'}
+            {validationError}
           </p>
-          <button
-            onClick={() => window.history.back()}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Go Back
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => window.history.back()}
+              className="w-full bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Go Back
+            </button>
+            <button
+              onClick={() => window.location.href = '/dashboard'}
+              className="w-full bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Dashboard
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  // Show mobile-specific warning/instructions
-  if (isMobile) {
-    return (
-      <>
-        {/* Mobile Instructions Modal */}
-        <MobileInstructionsModal />
-        {/* Mobile Interface */}
-        <MobilePhoneInterface />
-      </>
-    );
+  // Show invalid parameters error
+  if (!validRoleplayTypes.includes(type) || !validModes.includes(mode)) {
+    logger.error('Invalid roleplay parameters:', { type, mode });
+    return <Navigate to="/dashboard" replace />;
   }
 
-  // Desktop interface
-  return <FixedPhoneInterface />;
-};
-
-// Mobile Instructions Component
-const MobileInstructionsModal = () => {
-  const [showInstructions, setShowInstructions] = useState(true);
-
-  if (!showInstructions) return null;
-
+  // Render the phone interface
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl p-6 max-w-md w-full">
-        <div className="text-center mb-4">
-          <span className="text-4xl mb-2 block">📱</span>
-          <h3 className="text-xl font-bold text-gray-900">Mobile Roleplay Mode</h3>
-        </div>
-        
-        <div className="space-y-3 text-sm text-gray-700 mb-6">
-          <div className="flex items-start space-x-2">
-            <span className="text-blue-600 font-bold">1.</span>
-            <p>Allow microphone access when prompted</p>
-          </div>
-          <div className="flex items-start space-x-2">
-            <span className="text-blue-600 font-bold">2.</span>
-            <p>Use the large blue button to speak (push-to-talk or tap mode)</p>
-          </div>
-          <div className="flex items-start space-x-2">
-            <span className="text-blue-600 font-bold">3.</span>
-            <p>You can type responses using the "Type" button if voice doesn't work</p>
-          </div>
-          <div className="flex items-start space-x-2">
-            <span className="text-blue-600 font-bold">4.</span>
-            <p>Use headphones for better audio quality</p>
-          </div>
-        </div>
-
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-          <p className="text-xs text-yellow-800">
-            <strong>Note:</strong> Mobile speech recognition has limitations. 
-            If voice doesn't work well, use the text input option.
-          </p>
-        </div>
-
-        <button
-          onClick={() => setShowInstructions(false)}
-          className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-        >
-          Start Roleplay
-        </button>
-      </div>
+    <div className="roleplay-container">
+      <UnifiedPhoneInterface />
     </div>
   );
 };

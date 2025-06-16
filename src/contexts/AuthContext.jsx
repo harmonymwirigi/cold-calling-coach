@@ -1,4 +1,4 @@
-// src/contexts/AuthContext.jsx - Updated for Custom Email Verification
+// src/contexts/AuthContext.jsx - FIXED to include isAuthenticated() and isAdmin() functions
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
@@ -91,7 +91,8 @@ export const AuthProvider = ({ children }) => {
               first_name: user.user_metadata.first_name,
               prospect_job_title: user.user_metadata.prospect_job_title,
               prospect_industry: user.user_metadata.prospect_industry,
-              custom_behavior_notes: user.user_metadata.custom_behavior_notes
+              custom_behavior_notes: user.user_metadata.custom_behavior_notes,
+              role: user.user_metadata.role || 'user' // Default role
             };
             
             logger.log('Profile loaded from metadata:', profileFromMetadata);
@@ -124,7 +125,8 @@ export const AuthProvider = ({ children }) => {
             first_name: user.user_metadata.first_name,
             prospect_job_title: user.user_metadata.prospect_job_title,
             prospect_industry: user.user_metadata.prospect_industry,
-            custom_behavior_notes: user.user_metadata.custom_behavior_notes
+            custom_behavior_notes: user.user_metadata.custom_behavior_notes,
+            role: user.user_metadata.role || 'user' // Default role
           });
         }
       }
@@ -138,13 +140,24 @@ export const AuthProvider = ({ children }) => {
           setUserProfile({
             id: user.id,
             email: user.email,
-            first_name: user.user_metadata?.first_name || 'User'
+            first_name: user.user_metadata?.first_name || 'User',
+            role: user.user_metadata?.role || 'user'
           });
         }
       } catch (fallbackError) {
         logger.error('Fallback profile load failed:', fallbackError);
       }
     }
+  };
+
+  // FIXED: Add isAuthenticated function that your ProtectedRoute expects
+  const isAuthenticated = () => {
+    return !loading && !!user && !!userProfile;
+  };
+
+  // FIXED: Add isAdmin function that your ProtectedRoute expects
+  const isAdmin = () => {
+    return isAuthenticated() && (userProfile?.role === 'admin' || userProfile?.role === 'super_admin');
   };
 
   const signUp = async (email, password, profileData) => {
@@ -161,6 +174,7 @@ export const AuthProvider = ({ children }) => {
             prospect_job_title: profileData.prospect_job_title,
             prospect_industry: profileData.prospect_industry,
             custom_behavior_notes: profileData.custom_behavior_notes || '',
+            role: 'user', // Default role for new users
             email_verified: true // Mark as verified since we verified it
           },
           // Don't send confirmation email since we already verified
@@ -253,6 +267,7 @@ export const AuthProvider = ({ children }) => {
           prospect_job_title: profileData.prospect_job_title,
           prospect_industry: profileData.prospect_industry,
           custom_behavior_notes: profileData.custom_behavior_notes || '',
+          role: 'user', // Default role
           is_verified: true, // Mark as verified since we verified the email
           created_at: new Date().toISOString()
         }]);
@@ -402,33 +417,18 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Helper function to check if user is admin
-  const isAdmin = () => {
-    return userProfile?.role === 'admin' || user?.user_metadata?.role === 'admin';
-  };
-
-  // Helper function to check if user is authenticated
-  const isAuthenticated = () => {
-    return !!user;
-  };
-
-  // Helper function to get user role
-  const getUserRole = () => {
-    return userProfile?.role || user?.user_metadata?.role || 'user';
-  };
-
+  // FIXED: Include the missing functions that ProtectedRoute expects
   const value = {
     user,
     userProfile,
     loading,
+    isAuthenticated, // ✅ Function that returns boolean
+    isAdmin, // ✅ Function that returns boolean
     signUp,
     signIn,
     signOut,
     updateProfile,
-    resetPassword,
-    isAdmin,
-    isAuthenticated,
-    getUserRole
+    resetPassword
   };
 
   return (
