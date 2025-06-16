@@ -567,6 +567,8 @@ const UnifiedPhoneInterface = () => {
           )}
           
 {/* DEBUG SECTION - Add this for testing */}
+
+{/* DEBUG SECTION - Add this for testing */}
 {process.env.NODE_ENV === 'development' && callState === 'connected' && (
   <div className="mt-6 bg-yellow-600/20 rounded-lg p-4 border border-yellow-500">
     <h3 className="text-yellow-300 text-xs font-bold mb-3 text-center">🐛 DEBUG CONTROLS</h3>
@@ -616,7 +618,7 @@ const UnifiedPhoneInterface = () => {
       </button>
 
       <button
-        onClick={() => {
+        onClick={async () => {
           console.log('🧪 Testing simple AI response...');
           const testResponses = [
             "Who is this?",
@@ -626,20 +628,15 @@ const UnifiedPhoneInterface = () => {
           ];
           const randomResponse = testResponses[Math.floor(Math.random() * testResponses.length)];
           console.log('🤖 Test response:', randomResponse);
-          setCurrentMessage(randomResponse);
           
-          // Test speaking
-          getMicrophoneState().then(async (state) => {
-            if (state.conversationActive) {
-              try {
-                const { voiceService } = await import('../../services/voiceService');
-                await voiceService.speakText(randomResponse);
-                console.log('✅ Test speech completed');
-              } catch (error) {
-                console.error('❌ Test speech failed:', error);
-              }
-            }
-          });
+          // Test speaking directly
+          try {
+            const { voiceService } = await import('../../services/voiceService');
+            await voiceService.speakText(randomResponse);
+            console.log('✅ Test speech completed');
+          } catch (error) {
+            console.error('❌ Test speech failed:', error);
+          }
         }}
         className="w-full bg-purple-500 text-white py-2 px-3 rounded text-xs hover:bg-purple-400 transition-colors"
         disabled={isProcessing}
