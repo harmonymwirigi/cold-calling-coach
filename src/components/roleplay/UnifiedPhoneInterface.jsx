@@ -1,4 +1,4 @@
-// src/components/roleplay/UnifiedPhoneInterface.jsx - FIXED hangup button and debug
+// src/components/roleplay/UnifiedPhoneInterface.jsx - FIXED hangup button
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MessageCircle, ArrowLeft } from 'lucide-react';
@@ -35,10 +35,12 @@ const UnifiedPhoneInterface = () => {
   const [error, setError] = useState('');
   const [deviceType, setDeviceType] = useState('desktop');
   const [micPermission, setMicPermission] = useState('prompt');
+  const [isHangingUp, setIsHangingUp] = useState(false); // FIXED: Track hangup state
 
   // Refs
   const durationInterval = useRef(null);
   const initializationAttempted = useRef(false);
+  const hangupAttempted = useRef(false); // FIXED: Prevent double hangup
 
   // Detect device type
   useEffect(() => {
@@ -73,7 +75,7 @@ const UnifiedPhoneInterface = () => {
         });
       } catch (error) {
         logger.warn('Could not check microphone permission:', error);
-        setMicPermission('granted'); // Assume granted if we can't check
+        setMicPermission('granted');
       }
     };
 
@@ -89,6 +91,7 @@ const UnifiedPhoneInterface = () => {
       try {
         setIsInitializing(true);
         setError('');
+        hangupAttempted.current = false; // Reset hangup flag
 
         logger.log('🚀 Initializing roleplay:', { type, mode });
 
@@ -116,10 +119,11 @@ const UnifiedPhoneInterface = () => {
 
     initializeRoleplay();
 
-    // Cleanup on unmount
+    // FIXED: Cleanup on unmount with proper hangup
     return () => {
       logger.log('🧹 Component unmounting, cleaning up...');
-      if (currentSession) {
+      if (currentSession && !hangupAttempted.current) {
+        hangupAttempted.current = true;
         endSession('component_unmount');
       }
       resetSession();
@@ -127,7 +131,7 @@ const UnifiedPhoneInterface = () => {
         clearInterval(durationInterval.current);
       }
     };
-  }, [type, mode, startRoleplaySession, getRoleplayAccess, userProfile, deviceType, currentSession, endSession, resetSession]);
+  }, [type, mode, startRoleplaySession, getRoleplayAccess, userProfile, deviceType]);
 
   // Handle call duration timer
   useEffect(() => {
@@ -188,7 +192,6 @@ const UnifiedPhoneInterface = () => {
     try {
       setError('');
       
-      // Import voice service dynamically since it might not be in the context
       const { voiceService } = await import('../../services/voiceService');
       
       if (voiceService.isListening) {
@@ -224,61 +227,79 @@ const UnifiedPhoneInterface = () => {
     }
   }, [manualInput, handleUserResponse]);
 
-  // FIXED: Handle hang up with proper error handling and debugging
+  // FIXED: Comprehensive hangup handler with state tracking
   const handleHangUp = useCallback(async () => {
+    // Prevent double hangup
+    if (hangupAttempted.current || isHangingUp) {
+      logger.log('⚠️ Hangup already in progress');
+      return;
+    }
+
     try {
-      logger.log('📞 Hangup button clicked');
+      hangupAttempted.current = true;
+      setIsHangingUp(true);
       
-      if (!endSession) {
-        logger.error('❌ endSession function not available');
-        navigate('/dashboard');
-        return;
+      logger.log('📞 Hangup button clicked - starting immediate cleanup');
+      
+      // FIXED: Immediately stop all voice activities
+      try {
+        const { voiceService } = await import('../../services/voiceService');
+        logger.log('🔇 Stopping voice service immediately');
+        voiceService.stopConversation();
+        voiceService.stopSpeaking();
+        voiceService.stopListening();
+      } catch (voiceError) {
+        logger.warn('Voice service cleanup error:', voiceError);
       }
 
-      logger.log('📞 Ending session...');
-      const sessionResult = await endSession('user_hangup');
-      
-      logger.log('📞 Session ended, result:', sessionResult);
-      
-      // Update progress if needed
-      if (sessionResult && updateProgress) {
-        try {
-          const progressUpdate = {
-            total_attempts: 1,
-            total_passes: sessionResult.passed ? 1 : 0,
-            last_completed: new Date().toISOString()
-          };
+      // End the session
+      if (endSession) {
+        logger.log('📞 Ending session...');
+        const sessionResult = await endSession('user_hangup');
+        logger.log('📞 Session ended, result:', sessionResult);
+        
+        // Update progress if needed
+        if (sessionResult && updateProgress) {
+          try {
+            const progressUpdate = {
+              total_attempts: 1,
+              total_passes: sessionResult.passed ? 1 : 0,
+              last_completed: new Date().toISOString()
+            };
 
-          if (mode === 'marathon' && sessionResult.passed) {
-            const currentProgress = getRoleplayAccess(type);
-            progressUpdate.marathon_passes = (currentProgress.marathon_passes || 0) + 1;
+            if (mode === 'marathon' && sessionResult.passed) {
+              const currentProgress = getRoleplayAccess(type);
+              progressUpdate.marathon_passes = (currentProgress.marathon_passes || 0) + 1;
+            }
+
+            await updateProgress(type, progressUpdate);
+            logger.log('✅ Progress updated successfully');
+          } catch (progressError) {
+            logger.error('❌ Error updating progress:', progressError);
           }
-
-          await updateProgress(type, progressUpdate);
-          logger.log('✅ Progress updated successfully');
-        } catch (progressError) {
-          logger.error('❌ Error updating progress:', progressError);
         }
+      } else {
+        logger.error('❌ endSession function not available');
       }
       
-      // Navigate back to dashboard after a brief delay
-      setTimeout(() => {
-        logger.log('📞 Navigating to dashboard');
-        navigate('/dashboard');
-      }, 1000);
+      // FIXED: Navigate immediately without delay
+      logger.log('📞 Navigating to dashboard immediately');
+      navigate('/dashboard');
       
     } catch (error) {
       logger.error('❌ Error in hangup handler:', error);
       // Force navigation even if there's an error
       navigate('/dashboard');
+    } finally {
+      setIsHangingUp(false);
     }
-  }, [endSession, mode, type, getRoleplayAccess, updateProgress, navigate]);
+  }, [endSession, mode, type, getRoleplayAccess, updateProgress, navigate, isHangingUp]);
 
   // Handle back navigation
   const handleGoBack = useCallback(() => {
     logger.log('⬅️ Back button clicked');
     
-    if (currentSession && callState !== 'ended') {
+    if (currentSession && callState !== 'ended' && !hangupAttempted.current) {
       logger.log('⬅️ Session active, hanging up first...');
       handleHangUp();
     } else {
@@ -289,6 +310,8 @@ const UnifiedPhoneInterface = () => {
 
   // Get call state display
   const getCallStateDisplay = () => {
+    if (isHangingUp) return 'Ending Call...';
+    
     switch (callState) {
       case 'idle':
         return 'Ready';
@@ -357,7 +380,8 @@ const UnifiedPhoneInterface = () => {
       <div className="p-4 flex items-center justify-between text-white">
         <button
           onClick={handleGoBack}
-          className="flex items-center space-x-2 text-white/80 hover:text-white transition-colors"
+          disabled={isHangingUp}
+          className="flex items-center space-x-2 text-white/80 hover:text-white transition-colors disabled:opacity-50"
         >
           <ArrowLeft className="w-5 h-5" />
           <span>Back</span>
@@ -368,7 +392,7 @@ const UnifiedPhoneInterface = () => {
           <p className="text-sm opacity-80">{mode.toUpperCase()} MODE</p>
         </div>
         
-        <div className="w-16" /> {/* Spacer */}
+        <div className="w-16" />
       </div>
 
       {/* Error Banner */}
@@ -387,7 +411,7 @@ const UnifiedPhoneInterface = () => {
       {/* Debug Info */}
       {process.env.NODE_ENV === 'development' && (
         <div className="bg-yellow-600 text-white p-2 text-center text-xs">
-          Debug: callState={callState} | session={currentSession?.id?.slice(-6)} | processing={isProcessing ? 'yes' : 'no'}
+          Debug: callState={callState} | session={currentSession?.id?.slice(-6)} | processing={isProcessing ? 'yes' : 'no'} | hangingUp={isHangingUp ? 'yes' : 'no'}
         </div>
       )}
 
@@ -416,7 +440,7 @@ const UnifiedPhoneInterface = () => {
           </div>
 
           {/* Current Message */}
-          {currentMessage && callState === 'connected' && (
+          {currentMessage && callState === 'connected' && !isHangingUp && (
             <div className="bg-white/10 backdrop-blur rounded-lg p-4 mb-6 text-center border border-white/20">
               <p className="text-xs text-blue-200 mb-2">💬 Prospect says:</p>
               <p className="text-white text-sm font-medium">"{currentMessage}"</p>
@@ -428,6 +452,7 @@ const UnifiedPhoneInterface = () => {
             <VoiceStatusIndicator 
               callState={callState}
               isProcessing={isProcessing}
+              isHangingUp={isHangingUp}
               getMicrophoneState={getMicrophoneState}
             />
           </div>
@@ -435,43 +460,47 @@ const UnifiedPhoneInterface = () => {
           {/* Controls */}
           <div className="space-y-4">
             {/* Primary Microphone Button */}
-            {callState === 'connected' && (
+            {callState === 'connected' && !isHangingUp && (
               <div className="flex justify-center">
                 <MicrophoneButton 
                   onClick={handleMicClick}
-                  disabled={isProcessing || isMuted}
+                  disabled={isProcessing || isMuted || isHangingUp}
                   getMicrophoneState={getMicrophoneState}
                 />
               </div>
             )}
 
             {/* Secondary Controls */}
-            <div className="flex justify-center space-x-4">
-              {/* Text Input Toggle */}
-              <button
-                onClick={() => setShowManualInput(!showManualInput)}
-                className="w-12 h-12 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
-                title="Type response"
-              >
-                <MessageCircle className="w-5 h-5 text-white" />
-              </button>
+            {!isHangingUp && (
+              <div className="flex justify-center space-x-4">
+                {/* Text Input Toggle */}
+                <button
+                  onClick={() => setShowManualInput(!showManualInput)}
+                  disabled={isHangingUp}
+                  className="w-12 h-12 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-full flex items-center justify-center transition-colors"
+                  title="Type response"
+                >
+                  <MessageCircle className="w-5 h-5 text-white" />
+                </button>
 
-              {/* Mute Toggle */}
-              <button
-                onClick={() => setIsMuted(!isMuted)}
-                className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
-                  isMuted 
-                    ? 'bg-red-600 hover:bg-red-700' 
-                    : 'bg-gray-700 hover:bg-gray-600'
-                }`}
-                title={isMuted ? 'Unmute' : 'Mute'}
-              >
-                {isMuted ? <VolumeX className="w-5 h-5 text-white" /> : <Volume2 className="w-5 h-5 text-white" />}
-              </button>
-            </div>
+                {/* Mute Toggle */}
+                <button
+                  onClick={() => setIsMuted(!isMuted)}
+                  disabled={isHangingUp}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-50 ${
+                    isMuted 
+                      ? 'bg-red-600 hover:bg-red-700' 
+                      : 'bg-gray-700 hover:bg-gray-600'
+                  }`}
+                  title={isMuted ? 'Unmute' : 'Mute'}
+                >
+                  {isMuted ? <VolumeX className="w-5 h-5 text-white" /> : <Volume2 className="w-5 h-5 text-white" />}
+                </button>
+              </div>
+            )}
 
             {/* Manual Input */}
-            {showManualInput && (
+            {showManualInput && !isHangingUp && (
               <div className="space-y-3">
                 <textarea
                   value={manualInput}
@@ -489,7 +518,7 @@ const UnifiedPhoneInterface = () => {
                 <div className="flex space-x-2">
                   <button
                     onClick={handleManualSubmit}
-                    disabled={!manualInput.trim() || isProcessing}
+                    disabled={!manualInput.trim() || isProcessing || isHangingUp}
                     className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     Send Response
@@ -499,7 +528,8 @@ const UnifiedPhoneInterface = () => {
                       setShowManualInput(false);
                       setManualInput('');
                     }}
-                    className="bg-gray-600 text-white py-2 px-4 rounded-lg text-sm hover:bg-gray-700 transition-colors"
+                    disabled={isHangingUp}
+                    className="bg-gray-600 text-white py-2 px-4 rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50 transition-colors"
                   >
                     Cancel
                   </button>
@@ -507,21 +537,29 @@ const UnifiedPhoneInterface = () => {
               </div>
             )}
 
-            {/* FIXED: Hang Up Button with better debugging */}
+            {/* FIXED: Hangup Button with loading state */}
             <div className="flex justify-center pt-4">
               <button
                 onClick={handleHangUp}
-                disabled={callState === 'ended'}
-                className="w-16 h-16 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-full flex items-center justify-center transition-colors shadow-lg"
-                title="End Call"
+                disabled={callState === 'ended' || isHangingUp}
+                className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors shadow-lg ${
+                  isHangingUp 
+                    ? 'bg-gray-600 cursor-not-allowed opacity-50' 
+                    : 'bg-red-600 hover:bg-red-700 disabled:opacity-50'
+                }`}
+                title={isHangingUp ? 'Ending Call...' : 'End Call'}
               >
-                <PhoneOff className="w-8 h-8 text-white" />
+                {isHangingUp ? (
+                  <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <PhoneOff className="w-8 h-8 text-white" />
+                )}
               </button>
             </div>
           </div>
 
           {/* Session Stats */}
-          {stats && (
+          {stats && !isHangingUp && (
             <div className="mt-6 text-center text-white text-xs space-y-1 opacity-75">
               <div>Exchanges: {stats.exchanges}</div>
               <div>Stage: {stats.currentStage}</div>
@@ -530,14 +568,15 @@ const UnifiedPhoneInterface = () => {
 
           {/* Instructions */}
           <div className="mt-4 text-center text-white/60 text-xs">
-            {callState === 'dialing' && "Connecting to prospect..."}
-            {callState === 'connected' && !showManualInput && (
+            {isHangingUp && "Ending call..."}
+            {!isHangingUp && callState === 'dialing' && "Connecting to prospect..."}
+            {!isHangingUp && callState === 'connected' && !showManualInput && (
               micPermission === 'granted' 
                 ? "Tap microphone to speak or use text input"
                 : "Use text input to respond"
             )}
-            {callState === 'connected' && showManualInput && "Type your response and press Send"}
-            {callState === 'ended' && "Call completed"}
+            {!isHangingUp && callState === 'connected' && showManualInput && "Type your response and press Send"}
+            {!isHangingUp && callState === 'ended' && "Call completed"}
           </div>
         </div>
       </div>
@@ -545,11 +584,13 @@ const UnifiedPhoneInterface = () => {
   );
 };
 
-// Voice Status Indicator Component
-const VoiceStatusIndicator = ({ callState, isProcessing, getMicrophoneState }) => {
+// FIXED: Voice Status Indicator with hangup state
+const VoiceStatusIndicator = ({ callState, isProcessing, isHangingUp, getMicrophoneState }) => {
   const [micState, setMicState] = useState({ isListening: false, isSpeaking: false });
 
   useEffect(() => {
+    if (isHangingUp) return;
+
     const updateMicState = async () => {
       try {
         const state = await getMicrophoneState();
@@ -563,7 +604,11 @@ const VoiceStatusIndicator = ({ callState, isProcessing, getMicrophoneState }) =
     updateMicState();
 
     return () => clearInterval(interval);
-  }, [getMicrophoneState]);
+  }, [getMicrophoneState, isHangingUp]);
+
+  if (isHangingUp) {
+    return <p className="text-sm text-red-300">📞 Ending call...</p>;
+  }
 
   if (callState !== 'connected') {
     return (
@@ -642,7 +687,7 @@ const MicrophoneButton = ({ onClick, disabled, getMicrophoneState }) => {
   );
 };
 
-// Session Results Component
+// Session Results Component (unchanged)
 const SessionResults = ({ results, onContinue, onRetry }) => {
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -673,14 +718,12 @@ const SessionResults = ({ results, onContinue, onRetry }) => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-md mx-auto">
         <div className="bg-white rounded-xl shadow-xl overflow-hidden">
-          {/* Header */}
           <div className={`bg-${result.color}-500 text-white p-8 text-center`}>
             <div className="text-6xl mb-4">{result.icon}</div>
             <h1 className="text-2xl font-bold mb-2">{result.title}</h1>
             <p className="text-lg opacity-90">{result.message}</p>
           </div>
 
-          {/* Stats */}
           <div className="p-6">
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="text-center">
@@ -701,7 +744,6 @@ const SessionResults = ({ results, onContinue, onRetry }) => {
               </div>
             </div>
 
-            {/* Actions */}
             <div className="space-y-3">
               <button
                 onClick={onRetry}

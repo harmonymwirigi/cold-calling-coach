@@ -1,4 +1,4 @@
-// src/services/voiceService.js - FIXED callback integration
+// src/services/voiceService.js - FIXED speech recognition flow
 class VoiceService {
     constructor() {
       this.isInitialized = false;
@@ -18,48 +18,44 @@ class VoiceService {
         lang: 'en-US'
       };
       
-      // State tracking
+      // FIXED: Better state tracking
       this.lastSpeechTime = 0;
       this.silenceTimeout = null;
-      this.maxSilenceMs = 8000; // 8 seconds of silence
+      this.maxSilenceMs = 8000;
+      this.isProcessingResult = false;
+      this.shouldRestart = false;
       
       console.log('🎤 VoiceService constructor initialized');
     }
-  
+
     async initialize() {
       if (this.isInitialized) {
         console.log('🎤 VoiceService already initialized');
         return true;
       }
-  
+
       try {
         console.log('🎤 Initializing VoiceService...');
-  
-        // Check browser support
+
         if (!this.checkBrowserSupport()) {
           throw new Error('Browser does not support required speech features');
         }
-  
-        // Request microphone permission
+
         await this.requestMicrophonePermission();
-  
-        // Initialize speech recognition
         await this.initializeSpeechRecognition();
-  
-        // Test speech synthesis
         await this.testSpeechSynthesis();
-  
+
         this.isInitialized = true;
         console.log('✅ VoiceService initialized successfully');
         return true;
-  
+
       } catch (error) {
         console.error('❌ VoiceService initialization failed:', error);
         this.isInitialized = false;
         throw error;
       }
     }
-  
+
     checkBrowserSupport() {
       const hasRecognition = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
       const hasSynthesis = 'speechSynthesis' in window;
@@ -71,7 +67,7 @@ class VoiceService {
       
       return hasRecognition && hasSynthesis;
     }
-  
+
     async requestMicrophonePermission() {
       try {
         console.log('🎤 Requesting microphone permission...');
@@ -84,7 +80,6 @@ class VoiceService {
           } 
         });
         
-        // Stop the stream immediately - we just needed permission
         stream.getTracks().forEach(track => track.stop());
         
         console.log('✅ Microphone permission granted');
@@ -94,45 +89,47 @@ class VoiceService {
         throw new Error('Microphone permission is required for voice features');
       }
     }
-  
+
     async initializeSpeechRecognition() {
       try {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         this.recognition = new SpeechRecognition();
         
-        // Configure recognition
-        this.recognition.continuous = false; // Changed to false for better control
+        // FIXED: Better recognition settings
+        this.recognition.continuous = true; // Keep listening
         this.recognition.interimResults = true;
         this.recognition.lang = this.voiceSettings.lang;
         this.recognition.maxAlternatives = 1;
-  
-        // Set up event listeners
+
+        // FIXED: Improved event handlers
         this.recognition.onstart = () => {
           this.isListening = true;
+          this.isProcessingResult = false;
           this.lastSpeechTime = Date.now();
           console.log('🎤 Speech recognition started');
           this.startSilenceTimer();
         };
-  
+
         this.recognition.onresult = (event) => {
           this.handleSpeechResult(event);
         };
-  
+
         this.recognition.onend = () => {
-          this.isListening = false;
           console.log('🎤 Speech recognition ended');
+          this.isListening = false;
           this.clearSilenceTimer();
           
-          // Auto-restart if conversation is still active
-          if (this.conversationActive && !this.isSpeaking) {
+          // FIXED: Only restart if conversation is active AND we should restart
+          if (this.conversationActive && this.shouldRestart && !this.isSpeaking && !this.isProcessingResult) {
             setTimeout(() => {
-              if (this.conversationActive && !this.isSpeaking) {
+              if (this.conversationActive && !this.isSpeaking && !this.isProcessingResult) {
+                console.log('🔄 Auto-restarting speech recognition');
                 this.startListening();
               }
-            }, 1000);
+            }, 500);
           }
         };
-  
+
         this.recognition.onerror = (event) => {
           console.error('❌ Speech recognition error:', event.error);
           this.isListening = false;
@@ -142,14 +139,15 @@ class VoiceService {
             this.onErrorCallback(`Speech recognition error: ${event.error}`);
           }
         };
-  
+
         console.log('✅ Speech recognition initialized');
       } catch (error) {
         console.error('❌ Speech recognition setup failed:', error);
         throw error;
       }
     }
-  
+
+    // FIXED: Better speech result handling
     handleSpeechResult(event) {
       try {
         const result = event.results[event.resultIndex];
@@ -163,67 +161,83 @@ class VoiceService {
           isFinal,
           length: transcript.length 
         });
-  
-        if (isFinal && transcript.length > 2) {
+
+        // FIXED: Process final results with proper state management
+        if (isFinal && transcript.length > 2 && !this.isProcessingResult) {
+          this.isProcessingResult = true;
+          this.shouldRestart = false; // Stop auto-restart while processing
           this.lastSpeechTime = Date.now();
           
-          // FIXED: Add debugging and error handling for callback
-          console.log('🔄 Calling user speech callback with:', transcript);
+          console.log('🔄 Processing final result:', transcript);
           
-          // Send to callback if available
+          // Stop listening to prevent more input during processing
+          this.stopListening();
+          
           if (this.onUserSpeechCallback) {
             try {
-              this.onUserSpeechCallback(transcript, confidence);
-              console.log('✅ User speech callback completed');
+              // Give callback time to process
+              setTimeout(() => {
+                this.onUserSpeechCallback(transcript, confidence);
+                console.log('✅ User speech callback completed');
+                
+                // Mark processing as complete
+                setTimeout(() => {
+                  this.isProcessingResult = false;
+                  this.shouldRestart = true; // Allow restart after AI responds
+                }, 1000);
+              }, 100);
+              
             } catch (callbackError) {
               console.error('❌ Error in user speech callback:', callbackError);
+              this.isProcessingResult = false;
+              this.shouldRestart = true;
             }
           } else {
             console.warn('⚠️ No user speech callback set');
+            this.isProcessingResult = false;
+            this.shouldRestart = true;
           }
-          
-          // Stop listening since we got a final result
-          this.stopListening();
         }
       } catch (error) {
         console.error('❌ Error handling speech result:', error);
+        this.isProcessingResult = false;
+        this.shouldRestart = true;
       }
     }
-  
+
     startSilenceTimer() {
       this.clearSilenceTimer();
       
       this.silenceTimeout = setTimeout(() => {
-        if (this.isListening) {
+        if (this.isListening && !this.isProcessingResult) {
           console.log('⏰ Silence timeout - stopping listening');
           this.stopListening();
           
-          // Prompt user if conversation is active
-          if (this.conversationActive) {
+          // FIXED: Only prompt if conversation is still active
+          if (this.conversationActive && !this.isProcessingResult) {
             this.speakText("Are you still there?");
           }
         }
       }, this.maxSilenceMs);
     }
-  
+
     clearSilenceTimer() {
       if (this.silenceTimeout) {
         clearTimeout(this.silenceTimeout);
         this.silenceTimeout = null;
       }
     }
-  
+
     async testSpeechSynthesis() {
       try {
         if (!window.speechSynthesis) {
           throw new Error('Speech synthesis not available');
         }
         
-        // Wait for voices to load
         if (speechSynthesis.getVoices().length === 0) {
           await new Promise(resolve => {
             speechSynthesis.addEventListener('voiceschanged', resolve, { once: true });
-            setTimeout(resolve, 1000); // Fallback timeout
+            setTimeout(resolve, 1000);
           });
         }
         
@@ -234,15 +248,16 @@ class VoiceService {
         throw error;
       }
     }
-  
-    // START CONVERSATION FLOW
+
+    // FIXED: Better conversation flow management
     startConversation(onUserSpeechCallback, onErrorCallback) {
       console.log('🎬 Starting conversation flow');
       
-      // FIXED: Ensure callbacks are properly set with debugging
       this.onUserSpeechCallback = onUserSpeechCallback;
       this.onErrorCallback = onErrorCallback;
       this.conversationActive = true;
+      this.shouldRestart = true;
+      this.isProcessingResult = false;
       
       console.log('✅ Conversation callbacks set:', {
         hasUserSpeechCallback: !!this.onUserSpeechCallback,
@@ -251,36 +266,47 @@ class VoiceService {
       
       return true;
     }
-  
+
+    // FIXED: Complete conversation cleanup
     stopConversation() {
       console.log('🛑 Stopping conversation flow');
       
       this.conversationActive = false;
+      this.shouldRestart = false;
+      this.isProcessingResult = false;
+      
       this.stopListening();
       this.stopSpeaking();
+      this.clearSilenceTimer();
+      
       this.onUserSpeechCallback = null;
       this.onErrorCallback = null;
       
+      console.log('✅ Conversation stopped and cleaned up');
       return true;
     }
-  
-    // LISTENING METHODS
+
     startListening() {
       if (!this.isInitialized) {
         console.error('❌ Cannot start listening - service not initialized');
         return false;
       }
-  
+
       if (this.isListening) {
         console.log('⚠️ Already listening');
         return true;
       }
-  
+
       if (this.isSpeaking) {
         console.log('⚠️ Cannot listen while speaking');
         return false;
       }
-  
+
+      if (this.isProcessingResult) {
+        console.log('⚠️ Cannot listen while processing result');
+        return false;
+      }
+
       try {
         console.log('🎤 Starting to listen...');
         this.recognition.start();
@@ -290,12 +316,12 @@ class VoiceService {
         return false;
       }
     }
-  
+
     stopListening() {
       if (!this.isListening) {
         return true;
       }
-  
+
       try {
         console.log('🔇 Stopping listening...');
         this.recognition.stop();
@@ -306,38 +332,37 @@ class VoiceService {
         return false;
       }
     }
-  
-    // SPEAKING METHODS
+
+    // FIXED: Better speech handling with restart logic
     async speakText(text) {
       if (!text || typeof text !== 'string' || text.trim().length === 0) {
         console.warn('⚠️ Invalid text for speech:', text);
         return false;
       }
-  
+
       if (this.isSpeaking) {
         console.log('🔇 Stopping current speech to speak new text');
         this.stopSpeaking();
-        await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
-  
+
       return new Promise((resolve, reject) => {
         try {
           console.log('🗣️ Speaking:', text.substring(0, 100) + '...');
           
           this.isSpeaking = true;
+          this.shouldRestart = false; // Don't restart while speaking
           
-          // Stop listening while speaking
           if (this.isListening) {
             this.stopListening();
           }
-  
+
           const utterance = new SpeechSynthesisUtterance(text);
           utterance.rate = this.voiceSettings.rate;
           utterance.pitch = this.voiceSettings.pitch;
           utterance.volume = this.voiceSettings.volume;
           utterance.lang = this.voiceSettings.lang;
-  
-          // Try to use a good voice
+
           const voices = speechSynthesis.getVoices();
           const preferredVoice = voices.find(voice => 
             voice.lang.startsWith('en') && voice.name.includes('Google')
@@ -346,46 +371,50 @@ class VoiceService {
           if (preferredVoice) {
             utterance.voice = preferredVoice;
           }
-  
+
           utterance.onstart = () => {
             console.log('🗣️ Speech started');
           };
-  
+
           utterance.onend = () => {
             console.log('✅ Speech completed');
             this.isSpeaking = false;
             this.currentUtterance = null;
             
-            // Start listening again if conversation is active
-            if (this.conversationActive) {
+            // FIXED: Only restart listening if conversation is active and not processing
+            if (this.conversationActive && !this.isProcessingResult) {
+              this.shouldRestart = true;
               setTimeout(() => {
-                if (this.conversationActive && !this.isSpeaking) {
+                if (this.conversationActive && !this.isSpeaking && !this.isProcessingResult) {
+                  console.log('🔄 Restarting listening after speech');
                   this.startListening();
                 }
-              }, 500); // Brief pause before listening
+              }, 500);
             }
             
             resolve(true);
           };
-  
+
           utterance.onerror = (event) => {
             console.error('❌ Speech error:', event.error);
             this.isSpeaking = false;
             this.currentUtterance = null;
+            this.shouldRestart = true;
             reject(new Error(`Speech synthesis error: ${event.error}`));
           };
-  
+
           this.currentUtterance = utterance;
           speechSynthesis.speak(utterance);
-  
+
         } catch (error) {
           console.error('❌ Error in speakText:', error);
           this.isSpeaking = false;
+          this.shouldRestart = true;
           reject(error);
         }
       });
     }
-  
+
     stopSpeaking() {
       if (this.isSpeaking) {
         console.log('🔇 Stopping speech...');
@@ -395,18 +424,18 @@ class VoiceService {
       }
       return true;
     }
-  
-    // STATE METHODS
+
     getState() {
       return {
         isInitialized: this.isInitialized,
         isListening: this.isListening,
         isSpeaking: this.isSpeaking,
-        conversationActive: this.conversationActive
+        conversationActive: this.conversationActive,
+        isProcessingResult: this.isProcessingResult
       };
     }
-  
-    // CLEANUP
+
+    // FIXED: Complete cleanup
     cleanup() {
       console.log('🧹 Cleaning up voice service...');
       
@@ -421,12 +450,13 @@ class VoiceService {
         }
         this.recognition = null;
       }
-  
+
       this.isInitialized = false;
+      this.isProcessingResult = false;
+      this.shouldRestart = false;
       console.log('✅ Voice service cleanup complete');
     }
   }
-  
-  // Create singleton instance
+
   export const voiceService = new VoiceService();
   export default voiceService;

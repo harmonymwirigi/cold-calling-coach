@@ -1,7 +1,8 @@
-// src/contexts/RoleplayContext.jsx - FIXED to work with the new VoiceService API
+// src/contexts/RoleplayContext.jsx - FIXED hangup handling
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { voiceService } from '../services/voiceService';
+import { openAIService } from '../services/openaiService'; // FIXED: Use OpenAI service
 import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
 
@@ -20,7 +21,7 @@ export const RoleplayProvider = ({ children }) => {
   
   // Session state
   const [currentSession, setCurrentSession] = useState(null);
-  const [callState, setCallState] = useState('idle'); // idle, dialing, connected, ended
+  const [callState, setCallState] = useState('idle');
   const [sessionResults, setSessionResults] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentMessage, setCurrentMessage] = useState('');
@@ -32,6 +33,7 @@ export const RoleplayProvider = ({ children }) => {
   const evaluationsRef = useRef([]);
   const conversationStageRef = useRef('greeting');
   const aiPersonalityRef = useRef(null);
+  const isEndingSessionRef = useRef(false); // FIXED: Track if session is ending
 
   // Character templates for different roleplays
   const getCharacterForRoleplay = useCallback((roleplayType) => {
@@ -81,83 +83,58 @@ export const RoleplayProvider = ({ children }) => {
     return characters[roleplayType] || characters.opener_practice;
   }, []);
 
-  // AI Response Generator with realistic conversation flow
+  // FIXED: Use OpenAI service for AI responses
   const generateAIResponse = useCallback(async (userInput, context) => {
     try {
+      // FIXED: Check if session is ending
+      if (isEndingSessionRef.current) {
+        logger.log('⚠️ Session is ending, skipping AI response');
+        return {
+          success: false,
+          response: '',
+          shouldHangUp: true
+        };
+      }
+
       logger.log('🤖 Generating AI response for:', userInput);
       
-      const character = aiPersonalityRef.current;
       const stage = conversationStageRef.current;
-      const conversationLength = conversationHistory.length;
       
-      // Determine conversation stage progression
-      let nextStage = stage;
-      let shouldHangUp = false;
-      let evaluation = null;
-      
-      // Stage progression logic
-      if (stage === 'greeting' && conversationLength >= 2) {
-        nextStage = 'opener_response';
-      } else if (stage === 'opener_response' && conversationLength >= 4) {
-        nextStage = 'objection';
-      } else if (stage === 'objection' && conversationLength >= 6) {
-        nextStage = 'pitch_response';
-      } else if (stage === 'pitch_response' && conversationLength >= 8) {
-        nextStage = 'closing';
-      } else if (conversationLength >= 12) {
-        nextStage = 'ending';
-        shouldHangUp = true;
+      // FIXED: Use OpenAI service instead of local logic
+      const result = await openAIService.getProspectResponse(userInput, {
+        roleplayType: sessionRef.current?.roleplayType,
+        mode: sessionRef.current?.mode,
+        character: aiPersonalityRef.current
+      }, stage);
+
+      if (result.success) {
+        // Update stage
+        conversationStageRef.current = result.nextStage || stage;
+        
+        // Store evaluation if provided
+        if (result.evaluation) {
+          evaluationsRef.current.push({
+            stage: result.stage,
+            evaluation: result.evaluation,
+            timestamp: Date.now()
+          });
+        }
       }
-      
-      conversationStageRef.current = nextStage;
-      
-      // Generate contextual response based on stage and user input
-      let aiResponse = '';
-      
-      switch (nextStage) {
-        case 'opener_response':
-          aiResponse = generateOpenerResponse(userInput, character);
-          evaluation = evaluateOpener(userInput);
-          break;
-          
-        case 'objection':
-          aiResponse = generateObjection(userInput, character);
-          evaluation = evaluateResponse(userInput, 'objection_handling');
-          break;
-          
-        case 'pitch_response':
-          aiResponse = generatePitchResponse(userInput, character);
-          evaluation = evaluateResponse(userInput, 'pitch');
-          break;
-          
-        case 'closing':
-          aiResponse = generateClosingResponse(userInput, character);
-          evaluation = evaluateResponse(userInput, 'closing');
-          break;
-          
-        case 'ending':
-          aiResponse = generateEndingResponse(userInput, character);
-          evaluation = evaluateResponse(userInput, 'overall');
-          shouldHangUp = true;
-          break;
-          
-        default:
-          aiResponse = `${character.greeting}`;
-      }
-      
-      // Add some personality variations
-      aiResponse = addPersonalityToResponse(aiResponse, character);
-      
-      return {
-        success: true,
-        response: aiResponse,
-        stage: nextStage,
-        shouldHangUp,
-        evaluation
-      };
+
+      return result;
       
     } catch (error) {
       logger.error('❌ Error generating AI response:', error);
+      
+      // FIXED: Check if session ending before fallback
+      if (isEndingSessionRef.current) {
+        return {
+          success: false,
+          response: '',
+          shouldHangUp: true
+        };
+      }
+      
       return {
         success: false,
         error: error.message,
@@ -166,113 +143,19 @@ export const RoleplayProvider = ({ children }) => {
         shouldHangUp: false
       };
     }
-  }, [conversationHistory]);
-
-  // Response generators for different stages
-  const generateOpenerResponse = (userInput, character) => {
-    const responses = [
-      `Okay, ${userInput.includes('name') ? 'and what company are you with?' : 'who is this?'}`,
-      "I'm busy right now. What's this regarding?",
-      "How did you get my direct number?",
-      "I don't take unsolicited calls. What do you want?"
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
-
-  const generateObjection = (userInput, character) => {
-    const objections = [
-      "We're not looking for anything right now.",
-      "I'm not interested. Please remove me from your list.",
-      "We already have a solution for that.",
-      "Can you just send me an email instead?",
-      "I don't have time for this right now."
-    ];
-    return objections[Math.floor(Math.random() * objections.length)];
-  };
-
-  const generatePitchResponse = (userInput, character) => {
-    const responses = [
-      "That sounds like what everyone else is selling. How are you different?",
-      "What kind of results are we talking about? Do you have case studies?",
-      "How much does this cost? I need to see ROI.",
-      "This sounds too good to be true. What's the catch?",
-      "I need to discuss this with my team first."
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
-
-  const generateClosingResponse = (userInput, character) => {
-    const responses = [
-      "I'll need to think about it. Send me some information.",
-      "What's the next step if we decide to move forward?",
-      "I'm interested, but I need approval from my boss.",
-      "Can we schedule a proper meeting to discuss this?",
-      "Alright, you've got my attention. Tell me more."
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
-
-  const generateEndingResponse = (userInput, character) => {
-    const responses = [
-      "Okay, thanks for calling. I'll consider it.",
-      "I have to go now. We'll be in touch.",
-      "Send me that information and we'll see.",
-      "I'll discuss this with my team and get back to you.",
-      "Thanks for your time. Have a good day."
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
-
-  const addPersonalityToResponse = (response, character) => {
-    // Add occasional personality quirks
-    if (character.personality.includes('busy') && Math.random() < 0.3) {
-      response = "Look, I'm really busy. " + response;
-    }
-    if (character.personality.includes('skeptical') && Math.random() < 0.2) {
-      response = response + " I've heard this pitch before.";
-    }
-    return response;
-  };
-
-  // Simple evaluation system
-  const evaluateOpener = (userInput) => {
-    const hasName = /name.*is|i'm|this is/i.test(userInput);
-    const hasCompany = /company|from/i.test(userInput);
-    const hasReason = /reason|call|help|about/i.test(userInput);
-    const isPolite = /please|thank|sorry|excuse/i.test(userInput);
-    
-    const score = (hasName ? 1 : 0) + (hasCompany ? 1 : 0) + (hasReason ? 1 : 0) + (isPolite ? 1 : 0);
-    
-    return {
-      passed: score >= 2,
-      score: score,
-      maxScore: 4,
-      feedback: score >= 3 ? "Great opener!" : score >= 2 ? "Good opener, could be stronger" : "Opener needs work"
-    };
-  };
-
-  const evaluateResponse = (userInput, stage) => {
-    const wordCount = userInput.split(' ').length;
-    const hasValue = /save|improve|increase|reduce|help|benefit/i.test(userInput);
-    const isConfident = userInput.length > 10 && !userInput.includes('um') && !userInput.includes('uh');
-    
-    const score = (wordCount > 5 ? 1 : 0) + (hasValue ? 2 : 0) + (isConfident ? 1 : 0);
-    
-    return {
-      passed: score >= 2,
-      score: score,
-      maxScore: 4,
-      feedback: score >= 3 ? "Excellent response!" : score >= 2 ? "Good response" : "Response could be stronger"
-    };
-  };
+  }, []);
 
   // Start roleplay session
   const startRoleplaySession = useCallback(async (roleplayType, mode, metadata = {}) => {
     try {
       logger.log('🎬 Starting roleplay session:', { roleplayType, mode, metadata });
       
-      // Initialize voice service
+      // Reset ending flag
+      isEndingSessionRef.current = false;
+      
+      // Initialize services
       await voiceService.initialize();
+      await openAIService.initialize(); // FIXED: Initialize OpenAI service
       
       // Create session
       const character = getCharacterForRoleplay(roleplayType);
@@ -300,6 +183,9 @@ export const RoleplayProvider = ({ children }) => {
       
       // Start the conversation flow
       setTimeout(async () => {
+        // FIXED: Check if session still active
+        if (isEndingSessionRef.current) return;
+        
         setCallState('connected');
         
         // AI starts with greeting
@@ -313,7 +199,7 @@ export const RoleplayProvider = ({ children }) => {
           timestamp: Date.now()
         }]);
         
-        // FIXED: Start voice conversation using the correct API
+        // Start voice conversation
         voiceService.startConversation(
           handleUserSpeech,
           handleVoiceError
@@ -322,7 +208,7 @@ export const RoleplayProvider = ({ children }) => {
         // Speak the greeting
         await voiceService.speakText(greeting);
         
-      }, 2000); // Simulate dialing time
+      }, 2000);
       
       return session;
       
@@ -334,7 +220,9 @@ export const RoleplayProvider = ({ children }) => {
 
   // Handle user speech input
   const handleUserSpeech = useCallback(async (transcript, confidence) => {
-    if (!sessionRef.current || callState !== 'connected' || isProcessing) {
+    // FIXED: Check if session is ending
+    if (!sessionRef.current || callState !== 'connected' || isProcessing || isEndingSessionRef.current) {
+      logger.log('⚠️ Ignoring speech - session ending or invalid state');
       return;
     }
 
@@ -354,6 +242,12 @@ export const RoleplayProvider = ({ children }) => {
         roleplayType: sessionRef.current.roleplayType,
         mode: sessionRef.current.mode
       });
+
+      // FIXED: Check if session ended during processing
+      if (isEndingSessionRef.current) {
+        logger.log('⚠️ Session ended during processing, skipping AI response');
+        return;
+      }
 
       if (aiResult.success) {
         // Add AI response to conversation
@@ -388,10 +282,11 @@ export const RoleplayProvider = ({ children }) => {
       } else {
         logger.error('❌ AI response failed:', aiResult.error);
         
-        // Fallback response
-        const fallbackResponse = "I'm sorry, could you repeat that?";
-        await voiceService.speakText(fallbackResponse);
-        setCurrentMessage(fallbackResponse);
+        if (!isEndingSessionRef.current) {
+          const fallbackResponse = "I'm sorry, could you repeat that?";
+          await voiceService.speakText(fallbackResponse);
+          setCurrentMessage(fallbackResponse);
+        }
       }
 
     } catch (error) {
@@ -407,17 +302,26 @@ export const RoleplayProvider = ({ children }) => {
     // Don't end the session on voice errors, just log them
   }, []);
 
-  // End session
+  // FIXED: Improved end session with immediate cleanup
   const endSession = useCallback(async (reason = 'completed') => {
-    if (!sessionRef.current) {
+    if (!sessionRef.current || isEndingSessionRef.current) {
+      logger.log('⚠️ Session already ending or no session to end');
       return null;
     }
 
     try {
       logger.log('🏁 Ending session:', reason);
       
-      // FIXED: Stop voice service using correct API
+      // FIXED: Set ending flag immediately to prevent new voice activities
+      isEndingSessionRef.current = true;
+      
+      // FIXED: Immediately stop all voice activities
       voiceService.stopConversation();
+      voiceService.stopSpeaking();
+      voiceService.stopListening();
+      
+      // Stop OpenAI conversation
+      openAIService.resetConversation();
       
       const endTime = Date.now();
       const duration = Math.floor((endTime - startTimeRef.current) / 1000);
@@ -467,7 +371,6 @@ export const RoleplayProvider = ({ children }) => {
             });
         } catch (dbError) {
           logger.warn('Failed to log session to database:', dbError);
-          // Continue anyway - the session still works without database logging
         }
       }
       
@@ -479,12 +382,20 @@ export const RoleplayProvider = ({ children }) => {
     }
   }, [conversationHistory, userProfile]);
 
-  // Reset session
+  // FIXED: Complete reset with cleanup
   const resetSession = useCallback(() => {
     logger.log('🔄 Resetting session');
     
-    // FIXED: Stop voice service using correct API
+    // Set ending flag
+    isEndingSessionRef.current = true;
+    
+    // Complete voice service cleanup
     voiceService.stopConversation();
+    voiceService.stopSpeaking();
+    voiceService.stopListening();
+    
+    // Reset OpenAI
+    openAIService.resetConversation();
     
     setCurrentSession(null);
     setCallState('idle');
@@ -498,6 +409,7 @@ export const RoleplayProvider = ({ children }) => {
     evaluationsRef.current = [];
     conversationStageRef.current = 'greeting';
     aiPersonalityRef.current = null;
+    isEndingSessionRef.current = false; // Reset flag
   }, []);
 
   // Get session stats
