@@ -565,7 +565,95 @@ const UnifiedPhoneInterface = () => {
               <div>Stage: {stats.currentStage}</div>
             </div>
           )}
+          
+{/* DEBUG SECTION - Add this for testing */}
+{process.env.NODE_ENV === 'development' && callState === 'connected' && (
+  <div className="mt-6 bg-yellow-600/20 rounded-lg p-4 border border-yellow-500">
+    <h3 className="text-yellow-300 text-xs font-bold mb-3 text-center">🐛 DEBUG CONTROLS</h3>
+    <div className="space-y-2">
+      <button
+        onClick={() => {
+          console.log('🧪 Testing AI response flow...');
+          handleUserResponse("Hello Sarah, this is John from TechCorp. How are you today?");
+        }}
+        className="w-full bg-yellow-500 text-black py-2 px-3 rounded text-xs hover:bg-yellow-400 transition-colors"
+        disabled={isProcessing}
+      >
+        🧪 Test AI Response Flow
+      </button>
+      
+      <button
+        onClick={() => {
+          console.log('🧪 Current session state:', {
+            callState,
+            isProcessing,
+            hasSession: !!currentSession,
+            conversationLength: conversationHistory.length,
+            currentStage: getSessionStats()?.currentStage,
+            isEnding: isHangingUp
+          });
+        }}
+        className="w-full bg-blue-500 text-white py-2 px-3 rounded text-xs hover:bg-blue-400 transition-colors"
+      >
+        📊 Log Session State
+      </button>
+      
+      <button
+        onClick={async () => {
+          console.log('🧪 Testing voice service state...');
+          try {
+            const voiceState = await getMicrophoneState();
+            console.log('🎤 Voice state:', voiceState);
+            console.log('🎤 Is conversation active:', voiceState.conversationActive);
+            console.log('🎤 Is processing result:', voiceState.isProcessingResult);
+          } catch (error) {
+            console.error('❌ Error checking voice state:', error);
+          }
+        }}
+        className="w-full bg-green-500 text-white py-2 px-3 rounded text-xs hover:bg-green-400 transition-colors"
+      >
+        🎤 Check Voice State
+      </button>
 
+      <button
+        onClick={() => {
+          console.log('🧪 Testing simple AI response...');
+          const testResponses = [
+            "Who is this?",
+            "What's this about?", 
+            "I'm not interested.",
+            "How much does this cost?"
+          ];
+          const randomResponse = testResponses[Math.floor(Math.random() * testResponses.length)];
+          console.log('🤖 Test response:', randomResponse);
+          setCurrentMessage(randomResponse);
+          
+          // Test speaking
+          getMicrophoneState().then(async (state) => {
+            if (state.conversationActive) {
+              try {
+                const { voiceService } = await import('../../services/voiceService');
+                await voiceService.speakText(randomResponse);
+                console.log('✅ Test speech completed');
+              } catch (error) {
+                console.error('❌ Test speech failed:', error);
+              }
+            }
+          });
+        }}
+        className="w-full bg-purple-500 text-white py-2 px-3 rounded text-xs hover:bg-purple-400 transition-colors"
+        disabled={isProcessing}
+      >
+        🎙️ Test AI Speech
+      </button>
+    </div>
+    
+    <div className="mt-3 text-yellow-200 text-xs text-center">
+      <p>Exchanges: {stats?.exchanges || 0} | Stage: {stats?.currentStage}</p>
+      <p>Processing: {isProcessing ? 'YES' : 'NO'} | Hanging Up: {isHangingUp ? 'YES' : 'NO'}</p>
+    </div>
+  </div>
+)}
           {/* Instructions */}
           <div className="mt-4 text-center text-white/60 text-xs">
             {isHangingUp && "Ending call..."}
