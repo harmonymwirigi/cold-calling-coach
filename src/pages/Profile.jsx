@@ -1,8 +1,8 @@
-// src/pages/Profile.jsx - Real Data Version
+// src/pages/Profile.jsx - FIXED SUCCESS MESSAGE
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useProgress } from '../contexts/ProgressContext';
-import { User, Settings, Target, Clock, Award, Download, Save } from 'lucide-react';
+import { User, Settings, Target, Clock, Award, Download, Save, CheckCircle, AlertCircle } from 'lucide-react';
 
 const Profile = () => {
   const { userProfile, updateProfile, user } = useAuth();
@@ -83,6 +83,10 @@ const Profile = () => {
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    // Clear any existing messages when user starts typing
+    if (message.text) {
+      setMessage({ type: '', text: '' });
+    }
   };
 
   const handleSave = async () => {
@@ -90,6 +94,8 @@ const Profile = () => {
     setMessage({ type: '', text: '' });
 
     try {
+      console.log('🔄 Saving profile updates:', formData);
+      
       const result = await updateProfile({
         first_name: formData.firstName,
         prospect_job_title: formData.prospectJobTitle,
@@ -100,14 +106,30 @@ const Profile = () => {
         practice_reminders: formData.practiceReminders
       });
 
+      console.log('💾 Profile update result:', result);
+
       if (result.success) {
-        setMessage({ type: 'success', text: 'Profile updated successfully!' });
-        setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+        setMessage({ 
+          type: 'success', 
+          text: '✅ Profile updated successfully! Your changes have been saved.' 
+        });
+        
+        // Keep success message visible for 5 seconds
+        setTimeout(() => {
+          setMessage({ type: '', text: '' });
+        }, 5000);
       } else {
-        setMessage({ type: 'error', text: result.error || 'Failed to update profile' });
+        setMessage({ 
+          type: 'error', 
+          text: `❌ ${result.error || 'Failed to update profile. Please try again.'}` 
+        });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: 'An error occurred while updating your profile' });
+      console.error('❌ Profile update error:', error);
+      setMessage({ 
+        type: 'error', 
+        text: '❌ An unexpected error occurred. Please check your connection and try again.' 
+      });
     } finally {
       setLoading(false);
     }
@@ -132,6 +154,13 @@ const Profile = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    
+    // Show export success message
+    setMessage({ 
+      type: 'success', 
+      text: '📥 Data exported successfully! Check your downloads folder.' 
+    });
+    setTimeout(() => setMessage({ type: '', text: '' }), 3000);
   };
 
   const stats = getOverallStats();
@@ -166,6 +195,34 @@ const Profile = () => {
         </div>
       </div>
 
+      {/* Success/Error Message Banner */}
+      {message.text && (
+        <div className={`rounded-lg p-4 flex items-center space-x-3 ${
+          message.type === 'success' 
+            ? 'bg-green-50 border border-green-200' 
+            : 'bg-red-50 border border-red-200'
+        }`}>
+          {message.type === 'success' ? (
+            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+          ) : (
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+          )}
+          <div className={`font-medium ${
+            message.type === 'success' ? 'text-green-800' : 'text-red-800'
+          }`}>
+            {message.text}
+          </div>
+          <button
+            onClick={() => setMessage({ type: '', text: '' })}
+            className={`ml-auto text-sm underline hover:no-underline ${
+              message.type === 'success' ? 'text-green-600' : 'text-red-600'
+            }`}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg shadow-sm p-4">
@@ -192,8 +249,10 @@ const Profile = () => {
           <div className="flex items-center">
             <Award className="w-8 h-8 text-purple-600 mr-3" />
             <div>
-              <div className="text-2xl font-bold text-gray-900">{stats.averageScore}/4</div>
-              <div className="text-sm text-gray-600">Avg Score</div>
+              <div className="text-2xl font-bold text-gray-900">
+                {stats.practicesCompleted || 0}
+              </div>
+              <div className="text-sm text-gray-600">Practices Completed</div>
             </div>
           </div>
         </div>
@@ -237,7 +296,7 @@ const Profile = () => {
                       type="text"
                       value={formData.firstName}
                       onChange={(e) => handleInputChange('firstName', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
                   
@@ -269,7 +328,7 @@ const Profile = () => {
                     <select
                       value={formData.prospectJobTitle}
                       onChange={(e) => handleInputChange('prospectJobTitle', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Select job title...</option>
                       {JOB_TITLES.map((title) => (
@@ -285,7 +344,7 @@ const Profile = () => {
                     <select
                       value={formData.prospectIndustry}
                       onChange={(e) => handleInputChange('prospectIndustry', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Select industry...</option>
                       {INDUSTRIES.map((industry) => (
@@ -302,7 +361,7 @@ const Profile = () => {
                       value={formData.customBehaviorNotes}
                       onChange={(e) => handleInputChange('customBehaviorNotes', e.target.value)}
                       placeholder="e.g., Very busy executive, skeptical of new tools, prefers data-driven decisions..."
-                      className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 resize-none"
+                      className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
                     />
                     <p className="text-xs text-gray-500 mt-1">
                       These notes help the AI create more realistic prospect behavior
@@ -359,8 +418,8 @@ const Profile = () => {
                       <div className="text-blue-700 font-semibold">{stats.totalSessions}</div>
                     </div>
                     <div>
-                      <span className="text-blue-800">Pass Rate:</span>
-                      <div className="text-blue-700 font-semibold">{stats.passRate}%</div>
+                      <span className="text-blue-800">Total Hours:</span>
+                      <div className="text-blue-700 font-semibold">{stats.totalHours}h</div>
                     </div>
                   </div>
                 </div>
@@ -448,25 +507,23 @@ const Profile = () => {
             </div>
           )}
 
-          {/* Messages */}
-          {message.text && (
-            <div className={`mt-4 p-3 rounded-lg ${
-              message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-            }`}>
-              {message.text}
-            </div>
-          )}
-
           {/* Save Button */}
           {(activeTab === 'profile' || activeTab === 'practice' || activeTab === 'notifications') && (
             <div className="flex justify-end pt-6 border-t">
               <button
                 onClick={handleSave}
                 disabled={loading}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center"
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {loading ? 'Saving...' : 'Save Changes'}
+                {loading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
               </button>
             </div>
           )}
