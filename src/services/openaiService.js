@@ -1,37 +1,15 @@
-// src/services/openaiService.js - FIXED VERSION WITH PROPER INTEGRATION
+// src/services/openaiService.js - UPDATED WITH ROLEPLAY ENGINE INTEGRATION
 import OpenAI from 'openai';
 import logger from '../utils/logger';
-
-// Objection libraries for dynamic responses
-const EARLY_OBJECTIONS = [
-  "What's this about?",
-  "I'm not interested",
-  "We don't take cold calls",
-  "Now is not a good time",
-  "I have a meeting",
-  "Can you call me later?",
-  "Send me an email",
-  "Who gave you this number?",
-  "What are you trying to sell me?",
-  "Is this a sales call?"
-];
-
-const IMPATIENCE_PHRASES = [
-  "Hello? Are you still with me?",
-  "Can you hear me?",
-  "Still on the line?",
-  "I don't have much time for this."
-];
 
 export class OpenAIService {
   constructor() {
     this.conversationHistory = [];
-    this.currentStage = 'greeting';
-    this.usedObjections = new Set();
-    this.sessionData = {};
     this.isInitialized = false;
     this.client = null;
     this.useMockMode = false;
+    this.currentCharacter = null;
+    this.sessionContext = null;
   }
 
   async initialize() {
@@ -63,31 +41,41 @@ export class OpenAIService {
     }
   }
 
-  // CRITICAL FIX: Main method to get AI prospect response
-  async getProspectResponse(userInput, context, stage = 'greeting') {
+  // Set session context for roleplay-specific behavior
+  setSessionContext(roleplayType, mode, userProfile, character) {
+    this.sessionContext = {
+      roleplayType,
+      mode,
+      userProfile,
+      character
+    };
+    this.currentCharacter = character;
+    this.conversationHistory = [];
+    
+    logger.log('🎭 Session context set:', { roleplayType, mode, character: character?.name });
+  }
+
+  // Main method to get AI prospect response based on roleplay specifications
+  async getProspectResponse(stage, userInput, context = {}) {
     try {
-      logger.log('🤖 AI Processing:', { userInput: userInput.substring(0, 50), stage, context: context.roleplayType });
+      logger.log('🤖 AI Processing:', { stage, userInput: userInput?.substring(0, 50), context });
       
-      this.currentStage = stage;
-      
-      // Handle silence
-      if (!userInput || userInput.trim() === '') {
-        return {
-          success: true,
-          response: this.getImpatiencePhrase(),
-          stage,
-          nextStage: stage,
-          shouldHangUp: false
-        };
+      // Handle special stages
+      if (stage === 'greeting') {
+        return this.generateGreetingResponse();
       }
 
-      // CRITICAL FIX: Always try real AI first, then fallback
+      if (!userInput || userInput.trim() === '') {
+        return this.generateSilenceResponse();
+      }
+
+      // Try real AI first, then fallback
       let aiResponse = null;
       let shouldUseFallback = this.useMockMode;
 
       if (!shouldUseFallback) {
         try {
-          aiResponse = await this.callOpenAIAPI(userInput, context, stage);
+          aiResponse = await this.callOpenAIAPI(stage, userInput, context);
         } catch (error) {
           logger.warn('OpenAI API failed, using fallback:', error);
           shouldUseFallback = true;
@@ -95,16 +83,8 @@ export class OpenAIService {
       }
 
       if (shouldUseFallback || !aiResponse) {
-        aiResponse = this.generateFallbackResponse(userInput, context, stage);
+        aiResponse = this.generateFallbackResponse(stage, userInput, context);
       }
-
-      // Parse response and determine next action
-      const { nextStage, shouldHangUp } = this.determineNextAction(
-        userInput, 
-        aiResponse, 
-        stage, 
-        context
-      );
 
       // Add to conversation history
       this.conversationHistory.push(
@@ -115,44 +95,82 @@ export class OpenAIService {
       return {
         success: true,
         response: aiResponse,
-        evaluation: { passed: true, feedback: 'Good response!' },
         stage,
-        nextStage,
-        shouldHangUp,
-        objectionUsed: this.sessionData.lastObjection
+        context
       };
 
     } catch (error) {
       logger.error('❌ OpenAI API error:', error);
       
       // Always provide fallback
-      const fallbackResponse = this.generateFallbackResponse(userInput, context, stage);
+      const fallbackResponse = this.generateFallbackResponse(stage, userInput, context);
       
       return {
         success: true,
         response: fallbackResponse,
-        evaluation: { passed: true, feedback: 'Keep practicing!' },
         stage,
-        nextStage: this.getNextStage(stage),
-        shouldHangUp: false
+        context
       };
     }
   }
 
-  // CRITICAL FIX: Proper OpenAI API integration
-  async callOpenAIAPI(userInput, context, stage) {
+  // Generate greeting response based on roleplay type
+  generateGreetingResponse() {
+    const character = this.currentCharacter || { name: 'Sarah', title: 'VP of Marketing', company: 'TechCorp' };
+    
+    const greetings = [
+      "Hello?",
+      `${character.name} speaking.`,
+      `Hi, this is ${character.name}.`,
+      "Hello, who is this?",
+      `${character.name} here.`
+    ];
+
+    const response = greetings[Math.floor(Math.random() * greetings.length)];
+    
+    return {
+      success: true,
+      response,
+      stage: 'greeting'
+    };
+  }
+
+  // Generate silence/impatience response
+  generateSilenceResponse() {
+    const impatienceResponses = [
+      "Hello? Are you still with me?",
+      "Can you hear me?",
+      "Just checking you're there…",
+      "Still on the line?",
+      "I don't have much time for this.",
+      "Sounds like you are gone.",
+      "Are you okay to continue?",
+      "I am afraid I have to go."
+    ];
+
+    const response = impatienceResponses[Math.floor(Math.random() * impatienceResponses.length)];
+    
+    return {
+      success: true,
+      response,
+      stage: 'silence_warning'
+    };
+  }
+
+  // Call OpenAI API with roleplay-specific prompts
+  async callOpenAIAPI(stage, userInput, context) {
     if (!this.client) {
       throw new Error('OpenAI client not initialized');
     }
 
-    const messages = this.buildGPTPrompt(userInput, context, stage);
+    const messages = this.buildRoleplayPrompt(stage, userInput, context);
     
-    logger.log('📡 Calling OpenAI API with messages:', messages.length);
+    logger.log('📡 Calling OpenAI API for stage:', stage);
 
     const response = await this.client.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: messages,
-      max_tokens: 150,
+      max_tokens: 120,
       temperature: 0.7,
       presence_penalty: 0.6,
       frequency_penalty: 0.3
@@ -163,15 +181,24 @@ export class OpenAIService {
     }
 
     const aiResponse = response.choices[0].message.content.trim();
-    logger.log('✅ OpenAI API response received:', aiResponse.substring(0, 50));
+    logger.log('✅ OpenAI API response received for stage:', stage);
     
     return aiResponse;
   }
 
-  // CRITICAL FIX: Build proper GPT prompt for roleplay
-  buildGPTPrompt(userInput, context, stage) {
-    const character = this.getCurrentCharacter(context);
-    const systemPrompt = this.buildSystemPrompt(character, context, stage);
+  // Build roleplay-specific prompt based on specifications
+  buildRoleplayPrompt(stage, userInput, context) {
+    const character = this.currentCharacter || { 
+      name: 'Sarah', 
+      title: 'VP of Marketing', 
+      company: 'TechCorp',
+      personality: 'busy, professional, skeptical'
+    };
+
+    const basePrompt = this.buildCharacterPrompt(character, context);
+    const stagePrompt = this.buildStagePrompt(stage, context);
+    
+    const systemPrompt = `${basePrompt}\n\n${stagePrompt}\n\nRespond in under 25 words. Use natural, conversational English (CEFR C2 level). Stay in character.`;
     
     const messages = [
       {
@@ -180,8 +207,8 @@ export class OpenAIService {
       }
     ];
 
-    // Add conversation history (last 4 exchanges to maintain context)
-    const recentHistory = this.conversationHistory.slice(-8);
+    // Add conversation history (last 6 exchanges)
+    const recentHistory = this.conversationHistory.slice(-6);
     messages.push(...recentHistory);
 
     // Add current user input
@@ -193,251 +220,234 @@ export class OpenAIService {
     return messages;
   }
 
-  // CRITICAL FIX: Build character-specific system prompt
-  buildSystemPrompt(character, context, stage) {
-    const basePrompt = `You are ${character.name}, ${character.title} at ${character.company}.`;
+  // Build character-specific prompt
+  buildCharacterPrompt(character, context) {
+    const { roleplayType, userProfile } = this.sessionContext || {};
     
-    let roleplayPrompt = '';
+    let characterPrompt = `You are ${character.name}, ${character.title} at ${character.company}.`;
     
-    switch (context.roleplayType) {
-      case 'opener_practice':
-        roleplayPrompt = this.buildOpenerPrompt(character, stage);
-        break;
-      case 'pitch_practice':
-        roleplayPrompt = this.buildPitchPrompt(character, stage);
-        break;
-      case 'full_simulation':
-        roleplayPrompt = this.buildFullCallPrompt(character, stage);
-        break;
-      default:
-        roleplayPrompt = this.buildGeneralPrompt(character, stage);
+    // Add personality traits
+    if (character.personality) {
+      characterPrompt += ` You are ${character.personality}.`;
     }
 
-    return `${basePrompt}\n\n${roleplayPrompt}\n\nKeep responses under 30 words and sound natural.`;
-  }
-
-  buildOpenerPrompt(character, stage) {
-    if (stage === 'greeting') {
-      return `You just answered a cold call. Respond with a simple greeting like "Hello?" or "${character.name} speaking." Then wait for their opener.`;
-    } else if (stage === 'opener') {
-      // Give an objection after they deliver their opener
-      const objection = this.getRandomObjection('early');
-      return `The caller just gave their opener. Respond with this objection: "${objection}"`;
-    } else if (stage === 'objection') {
-      return `The caller is handling your objection. If they show empathy and ask questions, become more receptive. If they argue, be resistant.`;
+    // Add industry context if available
+    if (userProfile?.prospect_industry) {
+      characterPrompt += ` You work in ${userProfile.prospect_industry}.`;
     }
-    
-    return `Continue the cold call conversation naturally as a busy professional.`;
+
+    // Add custom behavior notes if available
+    if (userProfile?.custom_behavior_notes) {
+      characterPrompt += ` Additional context: ${userProfile.custom_behavior_notes}`;
+    }
+
+    return characterPrompt;
   }
 
-  buildPitchPrompt(character, stage) {
-    return `You're listening to a sales pitch. Act like a skeptical but fair business professional. Ask relevant questions and give appropriate objections.`;
-  }
-
-  buildFullCallPrompt(character, stage) {
-    return `You're receiving a complete cold call. Act naturally as a business professional - sometimes interested, sometimes skeptical, but always realistic.`;
-  }
-
-  buildGeneralPrompt(character, stage) {
-    return `Act as a realistic business professional receiving a cold call. Be appropriately challenging but fair.`;
-  }
-
-  // Get current character from context
-  getCurrentCharacter(context) {
-    // Default character if none provided
-    return context.character || {
-      name: 'Sarah Mitchell',
-      title: 'VP of Marketing',
-      company: 'TechCorp Solutions'
+  // Build stage-specific prompt based on roleplay specifications
+  buildStagePrompt(stage, context) {
+    const stagePrompts = {
+      greeting: "You just answered a cold call. Give a simple greeting and wait for their opener.",
+      
+      opener: "The caller just delivered their opener. Respond with skepticism or curiosity. Keep it brief.",
+      
+      objection: "Give a realistic early-stage objection from this list: 'What's this about?', 'I'm not interested', 'We don't take cold calls', 'Now is not a good time', 'Is this a sales call?', 'Who gave you this number?'. Pick one that feels natural.",
+      
+      objection_response: "The caller is handling your objection. If they show empathy and ask good questions, become slightly more receptive. If they argue or pitch immediately, be resistant and consider hanging up.",
+      
+      mini_pitch: "The caller is giving their pitch. Listen and then either ask a follow-up question about their solution or give a mild objection. Be realistic - not immediately sold but potentially interested.",
+      
+      pitch_prompt: "You want to hear their pitch. Use one of these: 'Alright, go ahead — what's this about?', 'So… what are you calling me about?', 'You've got 30 seconds. Impress me.', 'I'm listening. What do you do?', 'This better be good. What is it?'",
+      
+      questions_objections: "After hearing their pitch, either ask a realistic business question or give a post-pitch objection like: 'It's too expensive', 'We already use a competitor', 'How are you different?', 'I'm not the decision-maker'.",
+      
+      qualification: "The caller is trying to qualify you. If they ask good discovery questions, provide realistic answers about your company's situation. Don't make it too easy - business people are naturally cautious.",
+      
+      meeting_ask: "The caller is asking for a meeting. Respond realistically - maybe show some interest but also some hesitation. Ask about timing or what the meeting would cover.",
+      
+      confirmation: "If you've agreed to a meeting, wait for them to confirm details or end the call professionally.",
+      
+      default: "Continue the conversation naturally as a busy business professional receiving a cold call."
     };
+
+    return stagePrompts[stage] || stagePrompts.default;
   }
 
-  // Determine next action based on conversation flow
-  determineNextAction(userInput, aiResponse, stage, context) {
-    let nextStage = stage;
-    let shouldHangUp = false;
-
-    switch (context.roleplayType) {
-      case 'opener_practice':
-        ({ nextStage, shouldHangUp } = this.handleOpenerFlow(userInput, aiResponse, stage));
-        break;
-      case 'pitch_practice':
-        ({ nextStage, shouldHangUp } = this.handlePitchFlow(userInput, aiResponse, stage));
-        break;
-      default:
-        nextStage = this.getNextStage(stage);
-        shouldHangUp = false;
-    }
-
-    return { nextStage, shouldHangUp };
-  }
-
-  handleOpenerFlow(userInput, aiResponse, stage) {
-    switch (stage) {
-      case 'greeting':
-        return { nextStage: 'opener', shouldHangUp: false };
-      case 'opener':
-        // Random hangup chance (20%)
-        if (Math.random() < 0.2) {
-          return { nextStage: 'hangup', shouldHangUp: true };
-        }
-        return { nextStage: 'objection', shouldHangUp: false };
-      case 'objection':
-        // Check if they handled objection well
-        const handledWell = this.evaluateObjectionHandling(userInput);
-        if (handledWell) {
-          return { nextStage: 'mini_pitch', shouldHangUp: false };
-        } else {
-          return { nextStage: 'hangup', shouldHangUp: true };
-        }
-      case 'mini_pitch':
-        return { nextStage: 'hangup', shouldHangUp: true };
-      default:
-        return { nextStage: stage, shouldHangUp: false };
-    }
-  }
-
-  handlePitchFlow(userInput, aiResponse, stage) {
-    // Simpler flow for pitch practice
-    return { nextStage: this.getNextStage(stage), shouldHangUp: false };
-  }
-
-  // Simple objection handling evaluation
-  evaluateObjectionHandling(userInput) {
-    const lowerInput = userInput.toLowerCase();
-    
-    // Check for empathy words
-    const hasEmpathy = lowerInput.includes('understand') || 
-                      lowerInput.includes('appreciate') || 
-                      lowerInput.includes('respect') ||
-                      lowerInput.includes('realize');
-    
-    // Check they didn't argue
-    const isArgumentative = lowerInput.includes('but ') || 
-                           lowerInput.includes('however') || 
-                           lowerInput.includes('actually');
-    
-    // Check for question at the end
-    const hasQuestion = userInput.trim().endsWith('?');
-    
-    return hasEmpathy && !isArgumentative && hasQuestion;
-  }
-
-  // Get next stage in conversation flow
-  getNextStage(currentStage) {
-    const stageFlow = {
-      greeting: 'opener',
-      opener: 'objection',
-      objection: 'mini_pitch',
-      mini_pitch: 'post_pitch',
-      post_pitch: 'meeting',
-      meeting: 'hangup'
-    };
-    
-    return stageFlow[currentStage] || 'hangup';
-  }
-
-  // CRITICAL FIX: Improved fallback response system
-  generateFallbackResponse(userInput, context, stage) {
+  // Generate fallback responses based on stage
+  generateFallbackResponse(stage, userInput, context) {
     logger.log('🔄 Using fallback response for stage:', stage);
 
-    switch (context.roleplayType) {
-      case 'opener_practice':
-        return this.generateOpenerFallback(userInput, stage);
-      case 'pitch_practice':
-        return this.generatePitchFallback(userInput, stage);
-      default:
-        return this.generateGeneralFallback(userInput, stage);
-    }
-  }
-
-  generateOpenerFallback(userInput, stage) {
-    switch (stage) {
-      case 'greeting':
-        return "Hello, who is this?";
-      case 'opener':
-        const objection = this.getRandomObjection('early');
-        return objection;
-      case 'objection':
-        const lowerInput = userInput.toLowerCase();
-        if (lowerInput.includes('understand') || lowerInput.includes('appreciate')) {
-          return "Okay, what exactly are you offering?";
-        } else {
-          return "I really don't have time for this.";
-        }
-      case 'mini_pitch':
-        return "That sounds interesting. Let me think about it.";
-      default:
-        return "Can you tell me more?";
-    }
-  }
-
-  generatePitchFallback(userInput, stage) {
-    const pitchResponses = [
-      "Tell me more about that.",
-      "How exactly does that work?",
-      "What makes you different?",
-      "That's expensive. Is it worth it?",
-      "We already have a solution for that.",
-      "I'd need to see some proof of that."
-    ];
-    
-    return pitchResponses[Math.floor(Math.random() * pitchResponses.length)];
-  }
-
-  generateGeneralFallback(userInput, stage) {
-    const generalResponses = [
-      "I see. Tell me more.",
-      "How exactly would that help us?",
-      "What's the cost involved?",
-      "We're pretty busy right now.",
-      "I'll need to think about that.",
-      "Can you send me some information?"
-    ];
-    
-    return generalResponses[Math.floor(Math.random() * generalResponses.length)];
-  }
-
-  // Get random objection from pool
-  getRandomObjection(type) {
-    const objections = EARLY_OBJECTIONS;
-    const available = objections.filter(obj => !this.usedObjections.has(obj));
-    
-    if (available.length === 0) {
-      this.usedObjections.clear();
-    }
-    
-    const finalList = available.length > 0 ? available : objections;
-    const selected = finalList[Math.floor(Math.random() * finalList.length)];
-    this.usedObjections.add(selected);
-    this.sessionData.lastObjection = selected;
-    
-    logger.log('🎭 Selected objection:', selected);
-    return selected;
-  }
-
-  // Get impatience phrase for silence
-  getImpatiencePhrase() {
-    return IMPATIENCE_PHRASES[Math.floor(Math.random() * IMPATIENCE_PHRASES.length)];
-  }
-
-  // Generate coaching feedback
-  async generateCoachingFeedback(sessionData) {
-    return {
-      sales: "Great job! Your communication was clear and professional.",
-      grammar: "Your English is excellent - keep it up!",
-      vocabulary: "Good word choices throughout the call.",
-      pronunciation: "Speaking clearly - well done!",
-      overall: "Excellent practice session! You're improving with each call."
+    const fallbackResponses = {
+      greeting: "Hello?",
+      
+      opener: [
+        "What's this about?",
+        "I'm not interested.",
+        "We don't take cold calls.",
+        "Is this a sales call?",
+        "Who gave you this number?"
+      ],
+      
+      objection_response: this.generateObjectionResponse(userInput),
+      
+      mini_pitch: [
+        "Tell me more about that.",
+        "How exactly does that work?",
+        "What makes you different?",
+        "That sounds interesting. Go on."
+      ],
+      
+      pitch_prompt: [
+        "Alright, go ahead — what's this about?",
+        "You've got 30 seconds. Impress me.",
+        "I'm listening. What do you do?",
+        "Let's hear it."
+      ],
+      
+      questions_objections: [
+        "It's too expensive for us.",
+        "We already use a competitor.",
+        "How are you different from others?",
+        "I'm not the decision-maker.",
+        "What's the cost involved?",
+        "We're pretty busy right now."
+      ],
+      
+      qualification: [
+        "We're doing okay with our current setup.",
+        "It depends on what you're offering.",
+        "Tell me more about how this works.",
+        "What exactly are you proposing?"
+      ],
+      
+      meeting_ask: [
+        "I'm pretty busy next week.",
+        "What would we cover in the meeting?",
+        "How long would it take?",
+        "Can you send me some information first?"
+      ],
+      
+      default: [
+        "I see. Tell me more.",
+        "How exactly would that help us?",
+        "What's the cost involved?",
+        "I'll need to think about that."
+      ]
     };
+
+    const responses = fallbackResponses[stage] || fallbackResponses.default;
+    
+    if (Array.isArray(responses)) {
+      return responses[Math.floor(Math.random() * responses.length)];
+    }
+    
+    return responses;
+  }
+
+  // Generate objection response based on user input quality
+  generateObjectionResponse(userInput) {
+    const input = userInput.toLowerCase();
+    
+    // Check for empathy/acknowledgment
+    if (input.includes('understand') || input.includes('appreciate') || input.includes('get that') || input.includes('fair')) {
+      const positiveResponses = [
+        "Okay, what exactly are you offering?",
+        "I'm listening. What is it?",
+        "Alright, you have two minutes.",
+        "Go ahead, but keep it brief."
+      ];
+      return positiveResponses[Math.floor(Math.random() * positiveResponses.length)];
+    }
+    
+    // Check for arguments or pushiness
+    if (input.includes('but ') || input.includes('actually') || input.includes('however')) {
+      const resistantResponses = [
+        "I really don't have time for this.",
+        "Look, I'm not interested.",
+        "You're not listening. I said no.",
+        "I need to go."
+      ];
+      return resistantResponses[Math.floor(Math.random() * resistantResponses.length)];
+    }
+    
+    // Default neutral response
+    const neutralResponses = [
+      "What exactly is this about?",
+      "Can you be more specific?",
+      "I'm still not clear on what you want.",
+      "You have 30 seconds."
+    ];
+    return neutralResponses[Math.floor(Math.random() * neutralResponses.length)];
+  }
+
+  // Generate specific objection types
+  getEarlyStageObjection() {
+    const earlyObjections = [
+      "What's this about?",
+      "I'm not interested",
+      "We don't take cold calls",
+      "Now is not a good time",
+      "I have a meeting",
+      "Can you call me later?",
+      "Send me an email",
+      "Who gave you this number?",
+      "What are you trying to sell me?",
+      "Is this a sales call?",
+      "Is this a cold call?",
+      "Are you trying to sell me something?",
+      "We are ok for the moment",
+      "We're not looking for anything right now",
+      "How long is this going to take?",
+      "What company are you calling from?",
+      "I never heard of you"
+    ];
+
+    return earlyObjections[Math.floor(Math.random() * earlyObjections.length)];
+  }
+
+  getPostPitchObjection() {
+    const postPitchObjections = [
+      "It's too expensive for us",
+      "We have no budget right now",
+      "Your competitor is cheaper",
+      "Can you give us a discount?",
+      "This isn't a good time",
+      "We've already set this year's budget",
+      "Call me back next quarter",
+      "We're busy with other projects",
+      "We already use a competitor and we're happy",
+      "How exactly are you better than others?",
+      "I've never heard of your company",
+      "Who else like us have you worked with?",
+      "I'm not the decision-maker",
+      "I need approval from my team first",
+      "How long does this take to implement?",
+      "We don't have time to learn a new system"
+    ];
+
+    return postPitchObjections[Math.floor(Math.random() * postPitchObjections.length)];
+  }
+
+  getPitchPrompt() {
+    const pitchPrompts = [
+      "Alright, go ahead — what's this about?",
+      "So… what are you calling me about?",
+      "You've got 30 seconds. Impress me.",
+      "I'm listening. What do you do?",
+      "This better be good. What is it?",
+      "Okay. Tell me why you're calling.",
+      "Go on — what's the offer?",
+      "Convince me.",
+      "What's your pitch?",
+      "Let's hear it."
+    ];
+
+    return pitchPrompts[Math.floor(Math.random() * pitchPrompts.length)];
   }
 
   // Reset conversation state
   resetConversation() {
     this.conversationHistory = [];
-    this.currentStage = 'greeting';
-    this.usedObjections.clear();
-    this.sessionData = {};
     logger.log('🔄 OpenAI conversation reset');
   }
 
@@ -446,8 +456,21 @@ export class OpenAIService {
     return {
       isInitialized: this.isInitialized,
       useMockMode: this.useMockMode,
-      currentStage: this.currentStage,
-      conversationLength: this.conversationHistory.length
+      hasCharacter: !!this.currentCharacter,
+      conversationLength: this.conversationHistory.length,
+      sessionContext: this.sessionContext
+    };
+  }
+
+  // Generate coaching feedback (placeholder)
+  async generateCoachingFeedback(sessionData) {
+    // This would be implemented based on the detailed coaching specifications
+    return {
+      sales: "Good communication throughout the call.",
+      grammar: "Clear and natural English usage.",
+      vocabulary: "Appropriate word choices for business context.",
+      pronunciation: "Speaking clearly and confidently.",
+      overall: "Solid performance! Keep practicing to improve further."
     };
   }
 }

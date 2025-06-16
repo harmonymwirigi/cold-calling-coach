@@ -1,3 +1,4 @@
+// cold-calling-coach/api/verify-email.js
 const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(

@@ -1,7 +1,7 @@
-// src/components/roleplay/UnifiedPhoneInterface.jsx - FIXED hangup button
+// src/components/roleplay/UnifiedPhoneInterface.jsx - FULLY INTEGRATED VERSION
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MessageCircle, ArrowLeft } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MessageCircle, ArrowLeft, Clock, Star, Trophy } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRoleplay } from '../../contexts/RoleplayContext';
 import { useProgress } from '../../contexts/ProgressContext';
@@ -11,7 +11,7 @@ const UnifiedPhoneInterface = () => {
   const { type, mode } = useParams();
   const navigate = useNavigate();
   const { userProfile } = useAuth();
-  const { getRoleplayAccess, updateProgress } = useProgress();
+  const { canAccessRoleplay } = useProgress();
   const { 
     startRoleplaySession, 
     endSession, 
@@ -22,6 +22,9 @@ const UnifiedPhoneInterface = () => {
     isProcessing,
     currentMessage,
     conversationHistory,
+    currentStage,
+    callCount,
+    passCount,
     getSessionStats,
     handleUserResponse
   } = useRoleplay();
@@ -35,12 +38,13 @@ const UnifiedPhoneInterface = () => {
   const [error, setError] = useState('');
   const [deviceType, setDeviceType] = useState('desktop');
   const [micPermission, setMicPermission] = useState('prompt');
-  const [isHangingUp, setIsHangingUp] = useState(false); // FIXED: Track hangup state
+  const [isHangingUp, setIsHangingUp] = useState(false);
+  const [accessInfo, setAccessInfo] = useState(null);
 
   // Refs
   const durationInterval = useRef(null);
   const initializationAttempted = useRef(false);
-  const hangupAttempted = useRef(false); // FIXED: Prevent double hangup
+  const hangupAttempted = useRef(false);
 
   // Detect device type
   useEffect(() => {
@@ -82,7 +86,7 @@ const UnifiedPhoneInterface = () => {
     checkMicPermission();
   }, []);
 
-  // Initialize roleplay session
+  // Initialize roleplay session with access checking
   useEffect(() => {
     if (initializationAttempted.current) return;
     initializationAttempted.current = true;
@@ -91,20 +95,23 @@ const UnifiedPhoneInterface = () => {
       try {
         setIsInitializing(true);
         setError('');
-        hangupAttempted.current = false; // Reset hangup flag
+        hangupAttempted.current = false;
 
         logger.log('🚀 Initializing roleplay:', { type, mode });
 
-        // Check access
-        const access = getRoleplayAccess(type);
-        if (!access?.unlocked) {
-          throw new Error(access?.reason || 'Access denied to this roleplay');
+        // Check access first
+        const accessCheck = await canAccessRoleplay(type, mode);
+        setAccessInfo(accessCheck.accessInfo);
+        
+        if (!accessCheck.allowed) {
+          throw new Error(accessCheck.reason || 'Access denied to this roleplay');
         }
 
         // Start the roleplay session
         await startRoleplaySession(type, mode, {
           userProfile,
-          deviceType
+          deviceType,
+          accessInfo: accessCheck.accessInfo
         });
 
         logger.log('✅ Roleplay initialized successfully');
@@ -119,7 +126,7 @@ const UnifiedPhoneInterface = () => {
 
     initializeRoleplay();
 
-    // FIXED: Cleanup on unmount with proper hangup
+    // Cleanup on unmount
     return () => {
       logger.log('🧹 Component unmounting, cleaning up...');
       if (currentSession && !hangupAttempted.current) {
@@ -131,7 +138,7 @@ const UnifiedPhoneInterface = () => {
         clearInterval(durationInterval.current);
       }
     };
-  }, [type, mode, startRoleplaySession, getRoleplayAccess, userProfile, deviceType]);
+  }, [type, mode, startRoleplaySession, canAccessRoleplay, userProfile, deviceType]);
 
   // Handle call duration timer
   useEffect(() => {
@@ -227,9 +234,8 @@ const UnifiedPhoneInterface = () => {
     }
   }, [manualInput, handleUserResponse]);
 
-  // FIXED: Comprehensive hangup handler with state tracking
+  // Handle hangup with progress saving
   const handleHangUp = useCallback(async () => {
-    // Prevent double hangup
     if (hangupAttempted.current || isHangingUp) {
       logger.log('⚠️ Hangup already in progress');
       return;
@@ -239,9 +245,9 @@ const UnifiedPhoneInterface = () => {
       hangupAttempted.current = true;
       setIsHangingUp(true);
       
-      logger.log('📞 Hangup button clicked - starting immediate cleanup');
+      logger.log('📞 Hangup button clicked - starting cleanup');
       
-      // FIXED: Immediately stop all voice activities
+      // Stop voice service immediately
       try {
         const { voiceService } = await import('../../services/voiceService');
         logger.log('🔇 Stopping voice service immediately');
@@ -252,38 +258,15 @@ const UnifiedPhoneInterface = () => {
         logger.warn('Voice service cleanup error:', voiceError);
       }
 
-      // End the session
+      // End the session through context
       if (endSession) {
         logger.log('📞 Ending session...');
         const sessionResult = await endSession('user_hangup');
         logger.log('📞 Session ended, result:', sessionResult);
-        
-        // Update progress if needed
-        if (sessionResult && updateProgress) {
-          try {
-            const progressUpdate = {
-              total_attempts: 1,
-              total_passes: sessionResult.passed ? 1 : 0,
-              last_completed: new Date().toISOString()
-            };
-
-            if (mode === 'marathon' && sessionResult.passed) {
-              const currentProgress = getRoleplayAccess(type);
-              progressUpdate.marathon_passes = (currentProgress.marathon_passes || 0) + 1;
-            }
-
-            await updateProgress(type, progressUpdate);
-            logger.log('✅ Progress updated successfully');
-          } catch (progressError) {
-            logger.error('❌ Error updating progress:', progressError);
-          }
-        }
-      } else {
-        logger.error('❌ endSession function not available');
       }
       
-      // FIXED: Navigate immediately without delay
-      logger.log('📞 Navigating to dashboard immediately');
+      // Navigate back to dashboard
+      logger.log('📞 Navigating to dashboard');
       navigate('/dashboard');
       
     } catch (error) {
@@ -293,7 +276,7 @@ const UnifiedPhoneInterface = () => {
     } finally {
       setIsHangingUp(false);
     }
-  }, [endSession, mode, type, getRoleplayAccess, updateProgress, navigate, isHangingUp]);
+  }, [endSession, navigate, isHangingUp]);
 
   // Handle back navigation
   const handleGoBack = useCallback(() => {
@@ -341,11 +324,48 @@ const UnifiedPhoneInterface = () => {
     if (currentSession?.character) {
       return currentSession.character;
     }
-    return {
-      name: 'Loading...',
-      title: '',
-      company: ''
+    
+    // Default characters based on roleplay type
+    const defaultCharacters = {
+      opener_practice: { name: 'Sarah Mitchell', title: 'VP of Marketing', company: 'TechCorp Solutions' },
+      pitch_practice: { name: 'Michael Chen', title: 'CTO', company: 'InnovateX' },
+      warmup_challenge: { name: 'David Park', title: 'Operations Manager', company: 'EfficiencyPro' },
+      full_simulation: { name: 'Lisa Rodriguez', title: 'CEO', company: 'GrowthCorp' },
+      power_hour: { name: 'Jennifer Walsh', title: 'Sales Director', company: 'ResultsFirst' }
     };
+    
+    return defaultCharacters[type] || { name: 'Loading...', title: '', company: '' };
+  };
+
+  // Get progress indicators
+  const getProgressIndicators = () => {
+    const stats = getSessionStats();
+    const config = currentSession?.config;
+    
+    if (!config) return null;
+
+    // For marathon/legend modes, show call progress
+    if (config.type === 'marathon' || config.type === 'legend') {
+      return {
+        currentCall: callCount + 1,
+        totalCalls: config.totalCalls,
+        passedCalls: passCount,
+        requiredPasses: config.passingScore,
+        progress: Math.round(((callCount) / config.totalCalls) * 100)
+      };
+    }
+
+    // For quickfire mode (warmup challenge)
+    if (config.type === 'quickfire') {
+      return {
+        currentQuestion: stats?.exchanges || 0,
+        totalQuestions: config.totalQuestions,
+        requiredCorrect: config.passingScore,
+        progress: Math.round(((stats?.exchanges || 0) / config.totalQuestions) * 100)
+      };
+    }
+
+    return null;
   };
 
   // Show loading state
@@ -357,6 +377,9 @@ const UnifiedPhoneInterface = () => {
           <h2 className="text-xl font-semibold mb-2">Starting Roleplay</h2>
           <p className="text-blue-200">Setting up your practice session...</p>
           <p className="text-sm text-blue-300 mt-2">Device: {deviceType}</p>
+          {accessInfo && (
+            <p className="text-xs text-blue-400 mt-1">Access Level: {accessInfo.accessLevel}</p>
+          )}
         </div>
       </div>
     );
@@ -373,6 +396,7 @@ const UnifiedPhoneInterface = () => {
 
   const character = getCharacterInfo();
   const stats = getSessionStats();
+  const progressInfo = getProgressIndicators();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-blue-900">
@@ -395,6 +419,30 @@ const UnifiedPhoneInterface = () => {
         <div className="w-16" />
       </div>
 
+      {/* Progress Bar for Marathon/Legend */}
+      {progressInfo && (progressInfo.totalCalls || progressInfo.totalQuestions) && (
+        <div className="px-4 pb-2">
+          <div className="bg-white/10 rounded-full h-2 mb-2">
+            <div 
+              className="bg-blue-400 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${progressInfo.progress}%` }}
+            />
+          </div>
+          <div className="text-center text-white text-sm">
+            {progressInfo.totalCalls ? (
+              <>
+                Call {progressInfo.currentCall} of {progressInfo.totalCalls} • 
+                Passed: {progressInfo.passedCalls}/{progressInfo.requiredPasses}
+              </>
+            ) : (
+              <>
+                Question {progressInfo.currentQuestion} of {progressInfo.totalQuestions}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Error Banner */}
       {error && (
         <div className="bg-red-600 text-white p-4 text-center">
@@ -408,10 +456,10 @@ const UnifiedPhoneInterface = () => {
         </div>
       )}
 
-      {/* Debug Info */}
+      {/* Debug Info (Development only) */}
       {process.env.NODE_ENV === 'development' && (
         <div className="bg-yellow-600 text-white p-2 text-center text-xs">
-          Debug: callState={callState} | session={currentSession?.id?.slice(-6)} | processing={isProcessing ? 'yes' : 'no'} | hangingUp={isHangingUp ? 'yes' : 'no'}
+          Debug: {callState} | Stage: {currentStage} | Calls: {callCount} | Passed: {passCount} | Processing: {isProcessing ? 'yes' : 'no'}
         </div>
       )}
 
@@ -537,7 +585,7 @@ const UnifiedPhoneInterface = () => {
               </div>
             )}
 
-            {/* FIXED: Hangup Button with loading state */}
+            {/* Hangup Button */}
             <div className="flex justify-center pt-4">
               <button
                 onClick={handleHangUp}
@@ -561,96 +609,13 @@ const UnifiedPhoneInterface = () => {
           {/* Session Stats */}
           {stats && !isHangingUp && (
             <div className="mt-6 text-center text-white text-xs space-y-1 opacity-75">
-              <div>Exchanges: {stats.exchanges}</div>
-              <div>Stage: {stats.currentStage}</div>
+              <div>Current Stage: {currentStage}</div>
+              {progressInfo && (
+                <div>Progress: {progressInfo.progress}%</div>
+              )}
             </div>
           )}
-          
-{/* DEBUG SECTION - Add this for testing */}
 
-{/* DEBUG SECTION - Add this for testing */}
-{callState === 'connected' && (
-  <div className="mt-6 bg-yellow-600/20 rounded-lg p-4 border border-yellow-500">
-    <h3 className="text-yellow-300 text-xs font-bold mb-3 text-center">🐛 DEBUG CONTROLS</h3>
-    <div className="space-y-2">
-      <button
-        onClick={() => {
-          console.log('🧪 Testing AI response flow...');
-          handleUserResponse("Hello Sarah, this is John from TechCorp. How are you today?");
-        }}
-        className="w-full bg-yellow-500 text-black py-2 px-3 rounded text-xs hover:bg-yellow-400 transition-colors"
-        disabled={isProcessing}
-      >
-        🧪 Test AI Response Flow
-      </button>
-      
-      <button
-        onClick={() => {
-          console.log('🧪 Current session state:', {
-            callState,
-            isProcessing,
-            hasSession: !!currentSession,
-            conversationLength: conversationHistory.length,
-            currentStage: getSessionStats()?.currentStage,
-            isEnding: isHangingUp
-          });
-        }}
-        className="w-full bg-blue-500 text-white py-2 px-3 rounded text-xs hover:bg-blue-400 transition-colors"
-      >
-        📊 Log Session State
-      </button>
-      
-      <button
-        onClick={async () => {
-          console.log('🧪 Testing voice service state...');
-          try {
-            const voiceState = await getMicrophoneState();
-            console.log('🎤 Voice state:', voiceState);
-            console.log('🎤 Is conversation active:', voiceState.conversationActive);
-            console.log('🎤 Is processing result:', voiceState.isProcessingResult);
-          } catch (error) {
-            console.error('❌ Error checking voice state:', error);
-          }
-        }}
-        className="w-full bg-green-500 text-white py-2 px-3 rounded text-xs hover:bg-green-400 transition-colors"
-      >
-        🎤 Check Voice State
-      </button>
-
-      <button
-        onClick={async () => {
-          console.log('🧪 Testing simple AI response...');
-          const testResponses = [
-            "Who is this?",
-            "What's this about?", 
-            "I'm not interested.",
-            "How much does this cost?"
-          ];
-          const randomResponse = testResponses[Math.floor(Math.random() * testResponses.length)];
-          console.log('🤖 Test response:', randomResponse);
-          
-          // Test speaking directly
-          try {
-            const { voiceService } = await import('../../services/voiceService');
-            await voiceService.speakText(randomResponse);
-            console.log('✅ Test speech completed');
-          } catch (error) {
-            console.error('❌ Test speech failed:', error);
-          }
-        }}
-        className="w-full bg-purple-500 text-white py-2 px-3 rounded text-xs hover:bg-purple-400 transition-colors"
-        disabled={isProcessing}
-      >
-        🎙️ Test AI Speech
-      </button>
-    </div>
-    
-    <div className="mt-3 text-yellow-200 text-xs text-center">
-      <p>Exchanges: {stats?.exchanges || 0} | Stage: {stats?.currentStage}</p>
-      <p>Processing: {isProcessing ? 'YES' : 'NO'} | Hanging Up: {isHangingUp ? 'YES' : 'NO'}</p>
-    </div>
-  </div>
-)}
           {/* Instructions */}
           <div className="mt-4 text-center text-white/60 text-xs">
             {isHangingUp && "Ending call..."}
@@ -669,7 +634,7 @@ const UnifiedPhoneInterface = () => {
   );
 };
 
-// FIXED: Voice Status Indicator with hangup state
+// Voice Status Indicator Component
 const VoiceStatusIndicator = ({ callState, isProcessing, isHangingUp, getMicrophoneState }) => {
   const [micState, setMicState] = useState({ isListening: false, isSpeaking: false });
 
@@ -772,7 +737,7 @@ const MicrophoneButton = ({ onClick, disabled, getMicrophoneState }) => {
   );
 };
 
-// Session Results Component (unchanged)
+// Session Results Component
 const SessionResults = ({ results, onContinue, onRetry }) => {
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -785,7 +750,7 @@ const SessionResults = ({ results, onContinue, onRetry }) => {
       return { 
         color: 'green', 
         icon: '🌟', 
-        title: 'Great Job!',
+        title: 'Excellent Work!',
         message: 'You passed this roleplay!'
       };
     }
@@ -810,14 +775,17 @@ const SessionResults = ({ results, onContinue, onRetry }) => {
           </div>
 
           <div className="p-6">
+            {/* Metrics */}
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="text-center">
-                <div className="text-xl font-bold text-gray-900">{formatTime(results.duration)}</div>
+                <div className="text-xl font-bold text-gray-900">
+                  {results.metrics?.duration ? formatTime(results.metrics.duration) : '0:00'}
+                </div>
                 <div className="text-xs text-gray-600">Duration</div>
               </div>
               <div className="text-center">
                 <div className={`text-xl font-bold text-${result.color}-600`}>
-                  {results.metrics?.averageScore?.toFixed(1) || 'N/A'}
+                  {results.metrics?.averageScore || 'N/A'}
                 </div>
                 <div className="text-xs text-gray-600">Avg Score</div>
               </div>
@@ -829,6 +797,47 @@ const SessionResults = ({ results, onContinue, onRetry }) => {
               </div>
             </div>
 
+            {/* Marathon/Legend specific metrics */}
+            {results.metrics && (results.metrics.totalCalls > 1) && (
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <h3 className="font-semibold text-gray-900 mb-2">Session Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-600">Total Calls:</span>
+                    <span className="ml-2 font-medium">{results.metrics.totalCalls}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Passed:</span>
+                    <span className="ml-2 font-medium">{results.metrics.passedCalls}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Pass Rate:</span>
+                    <span className="ml-2 font-medium">{results.metrics.passRate}%</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Required:</span>
+                    <span className="ml-2 font-medium">{results.metrics.requiredPasses || 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Unlocks */}
+            {results.unlocks && results.unlocks.length > 0 && (
+              <div className="bg-green-50 rounded-lg p-4 mb-6">
+                <h3 className="font-semibold text-green-900 mb-2">🎉 New Modules Unlocked!</h3>
+                {results.unlocks.map((unlock, index) => (
+                  <div key={index} className="text-sm text-green-800">
+                    📚 {unlock.module.replace('_', ' ').toUpperCase()} 
+                    {unlock.expiresAt && (
+                      <span className="text-green-600"> (24h access)</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Action Buttons */}
             <div className="space-y-3">
               <button
                 onClick={onRetry}

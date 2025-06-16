@@ -1,3 +1,4 @@
+// cold-calling-coach/api/send-verification.js
 const { Resend } = require('resend');
 const { createClient } = require('@supabase/supabase-js');
 

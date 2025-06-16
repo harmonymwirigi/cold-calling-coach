@@ -1,9 +1,9 @@
-// src/contexts/ProgressContext.jsx - FIXED VERSION
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+// src/contexts/ProgressContext.jsx - UPDATED WITH FULL INTEGRATION
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { supabase } from '../services/supabase';
+import { accessLevelAPI } from '../api/accessLevelAPI';
+import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
-import { getTimeAgo } from '../utils/formatters';
 
 const ProgressContext = createContext({});
 
@@ -16,295 +16,343 @@ export const useProgress = () => {
 };
 
 export const ProgressProvider = ({ children }) => {
-  const { userProfile, user } = useAuth();
-  const [userProgress, setUserProgress] = useState({});
+  const { user, userProfile } = useAuth();
+  
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [progress, setProgress] = useState({});
+  const [sessions, setSessions] = useState([]);
+  const [accessStatus, setAccessStatus] = useState({});
+  const [overallStats, setOverallStats] = useState({
+    totalSessions: 0,
+    totalHours: 0,
+    practicesCompleted: 0,
+    marathonsCompleted: 0,
+    legendsCompleted: 0
+  });
 
-  // Roleplay configurations
-  const roleplayConfigs = {
-    opener_practice: {
-      name: 'Opener Practice',
-      description: 'Practice your cold call openings',
-      requiredToUnlock: null,
-      modes: ['practice', 'marathon', 'legend']
-    },
-    objection_practice: {
-      name: 'Objection Handling',
-      description: 'Master handling common objections',
-      requiredToUnlock: 'opener_practice',
-      modes: ['practice', 'marathon', 'legend']
-    },
-    closing_practice: {
-      name: 'Closing Techniques',
-      description: 'Learn to close deals effectively',
-      requiredToUnlock: 'objection_practice',
-      modes: ['practice', 'marathon', 'legend']
-    }
-  };
-
-  // Load user progress
-  const loadUserProgress = useCallback(async () => {
+  // Load user progress data
+  const loadProgressData = useCallback(async () => {
     if (!user?.id) {
-      logger.log('No user ID, skipping progress load');
+      setLoading(false);
       return;
     }
 
     try {
       setLoading(true);
+      setError(null);
+
+      logger.log('📊 Loading progress data for user:', user.id);
+
+      // Load user access status (includes progress for all modules)
+      const accessResult = await accessLevelAPI.getUserAccessStatus(user.id);
       
-      const { data, error } = await supabase
-        .from('user_progress')
-        .select('*')
-        .eq('user_id', user.id);
-
-      if (error) {
-        logger.error('Error loading progress:', error);
-        return;
+      if (!accessResult.success) {
+        throw new Error(accessResult.error || 'Failed to load access status');
       }
 
-      // Convert array to object for easy access
-      const progressObj = {};
-      if (data) {
-        data.forEach(item => {
-          progressObj[item.roleplay_type] = item;
-        });
-      }
+      setAccessStatus(accessResult.accessStatus);
 
-      // Initialize missing roleplay types
-      for (const roleplayType of Object.keys(roleplayConfigs)) {
-        if (!progressObj[roleplayType]) {
-          progressObj[roleplayType] = {
-            user_id: user.id,
-            roleplay_type: roleplayType,
-            total_attempts: 0,
-            total_passes: 0,
-            marathon_passes: 0,
-            legend_completed: false,
-            legend_attempt_used: true,
-            unlock_expiry: null
-          };
+      // Extract progress data from access status
+      const progressData = {};
+      Object.keys(accessResult.accessStatus).forEach(roleplayType => {
+        const moduleData = accessResult.accessStatus[roleplayType];
+        if (moduleData.progress) {
+          progressData[roleplayType] = moduleData.progress;
         }
+      });
+      setProgress(progressData);
+
+      // Load session history
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('session_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (sessionError) {
+        logger.warn('Failed to load sessions:', sessionError);
+        setSessions([]);
+      } else {
+        setSessions(sessionData || []);
       }
 
-      setUserProgress(progressObj);
-      logger.log('✅ User progress loaded:', progressObj);
+      // Calculate overall stats
+      calculateOverallStats(progressData, sessionData || []);
 
-    } catch (error) {
-      logger.error('Failed to load user progress:', error);
+      logger.log('✅ Progress data loaded successfully');
+
+    } catch (err) {
+      logger.error('❌ Error loading progress data:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }, [user?.id]);
 
-  // Load progress on mount and user change
-  useEffect(() => {
-    loadUserProgress();
-  }, [loadUserProgress]);
-
-  // Update user progress - using database function
-  const updateProgress = useCallback(async (roleplayType, updates) => {
-    if (!user?.id) {
-      logger.error('No user ID for progress update');
-      return { success: false, error: 'Not authenticated' };
-    }
-
-    try {
-      logger.log('📊 Updating progress:', { roleplayType, updates });
-
-      // Use RPC call to the upsert function if it exists
-      const { data: rpcData, error: rpcError } = await supabase
-        .rpc('upsert_user_progress', {
-          p_user_id: user.id,
-          p_roleplay_type: roleplayType,
-          p_total_attempts: updates.total_attempts,
-          p_total_passes: updates.total_passes,
-          p_marathon_passes: updates.marathon_passes,
-          p_legend_completed: updates.legend_completed,
-          p_unlock_expiry: updates.unlock_expiry,
-          p_legend_attempt_used: updates.legend_attempt_used
-        });
-
-      if (rpcError) {
-        // Fallback to regular upsert if RPC doesn't exist
-        logger.warn('RPC failed, using regular upsert:', rpcError);
-        
-        // Get current progress first
-        const currentProgress = userProgress[roleplayType] || {
-          total_attempts: 0,
-          total_passes: 0,
-          marathon_passes: 0
-        };
-
-        // Merge updates with current values
-        const mergedData = {
-          user_id: user.id,
-          roleplay_type: roleplayType,
-          total_attempts: currentProgress.total_attempts + (updates.total_attempts || 0),
-          total_passes: currentProgress.total_passes + (updates.total_passes || 0),
-          marathon_passes: updates.marathon_passes !== undefined ? 
-            updates.marathon_passes : currentProgress.marathon_passes,
-          legend_completed: updates.legend_completed !== undefined ? 
-            updates.legend_completed : currentProgress.legend_completed,
-          legend_attempt_used: updates.legend_attempt_used !== undefined ? 
-            updates.legend_attempt_used : currentProgress.legend_attempt_used,
-          unlock_expiry: updates.unlock_expiry || currentProgress.unlock_expiry,
-          updated_at: new Date().toISOString()
-        };
-
-        const { data, error } = await supabase
-          .from('user_progress')
-          .upsert(mergedData, {
-            onConflict: 'user_id,roleplay_type'
-          })
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        // Update local state
-        setUserProgress(prev => ({
-          ...prev,
-          [roleplayType]: data
-        }));
-      }
-
-      // Reload progress to ensure consistency
-      await loadUserProgress();
-      
-      logger.log('✅ Progress updated successfully');
-      return { success: true };
-
-    } catch (error) {
-      logger.error('Failed to update progress:', error.message);
-      return { success: false, error: error.message };
-    }
-  }, [user?.id, userProgress, loadUserProgress]);
-
-  // Get roleplay access status
-  const getRoleplayAccess = useCallback((roleplayType) => {
-    const config = roleplayConfigs[roleplayType];
-    if (!config) {
-      return { unlocked: false, reason: 'Unknown roleplay type' };
-    }
-
-    // First roleplay is always unlocked
-    if (!config.requiredToUnlock) {
-      return { 
-        unlocked: true,
-        ...userProgress[roleplayType]
-      };
-    }
-
-    // Check if prerequisite is completed
-    const prerequisite = userProgress[config.requiredToUnlock];
-    if (!prerequisite || prerequisite.total_passes === 0) {
-      return { 
-        unlocked: false, 
-        reason: `Complete ${roleplayConfigs[config.requiredToUnlock].name} first`,
-        ...userProgress[roleplayType]
-      };
-    }
-
-    // Check if has active unlock
-    const progress = userProgress[roleplayType];
-    if (progress?.unlock_expiry) {
-      const expiryDate = new Date(progress.unlock_expiry);
-      if (expiryDate > new Date()) {
-        return { 
-          unlocked: true,
-          temporaryUnlock: true,
-          expiresAt: expiryDate,
-          ...progress
-        };
-      }
-    }
-
-    return { 
-      unlocked: true,
-      ...progress
-    };
-  }, [userProgress]);
-
-  // Get overall statistics
-  const getOverallStats = useCallback(() => {
+  // Calculate overall statistics
+  const calculateOverallStats = useCallback((progressData, sessionData) => {
     const stats = {
-      totalAttempts: 0,
-      totalPasses: 0,
-      marathonPasses: 0,
-      legendsCompleted: 0,
-      averagePassRate: 0
+      totalSessions: sessionData.length,
+      totalHours: Math.round(sessionData.reduce((sum, s) => sum + (s.duration_seconds || 0), 0) / 3600 * 10) / 10,
+      practicesCompleted: 0,
+      marathonsCompleted: 0,
+      legendsCompleted: 0
     };
 
-    Object.values(userProgress).forEach(progress => {
-      stats.totalAttempts += progress.total_attempts || 0;
-      stats.totalPasses += progress.total_passes || 0;
-      stats.marathonPasses += progress.marathon_passes || 0;
+    // Count completions from progress data
+    Object.values(progressData).forEach(progress => {
+      stats.practicesCompleted += progress.total_passes || 0;
+      stats.marathonsCompleted += progress.marathon_passes || 0;
       if (progress.legend_completed) {
-        stats.legendsCompleted += 1;
+        stats.legendsCompleted++;
       }
     });
 
-    if (stats.totalAttempts > 0) {
-      stats.averagePassRate = (stats.totalPasses / stats.totalAttempts) * 100;
+    setOverallStats(stats);
+  }, []);
+
+  // Get roleplay access information
+  const getRoleplayAccess = useCallback((roleplayType, mode = 'practice') => {
+    const moduleAccess = accessStatus[roleplayType];
+    if (!moduleAccess) {
+      return {
+        unlocked: false,
+        reason: 'Module not found',
+        marathonPasses: 0,
+        legendCompleted: false
+      };
     }
 
-    return stats;
-  }, [userProgress]);
+    const modeAccess = moduleAccess[mode];
+    if (!modeAccess) {
+      return {
+        unlocked: false,
+        reason: 'Mode not available',
+        marathonPasses: 0,
+        legendCompleted: false
+      };
+    }
 
-  // Get recent activity
-  const getRecentActivity = useCallback(async () => {
-    if (!user?.id) return [];
+    return {
+      unlocked: modeAccess.unlocked,
+      reason: modeAccess.reason,
+      marathonPasses: modeAccess.marathonPasses || 0,
+      legendCompleted: modeAccess.legendCompleted || false,
+      legendAttemptUsed: modeAccess.legendAttemptUsed !== false,
+      unlockExpiry: modeAccess.unlockExpiry,
+      accessLevel: modeAccess.accessLevel
+    };
+  }, [accessStatus]);
+
+  // Update progress after session completion
+  const updateProgress = useCallback(async (roleplayType, sessionResult) => {
+    if (!user?.id) {
+      throw new Error('User not authenticated');
+    }
 
     try {
-      const { data, error } = await supabase
-        .from('session_logs')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
+      logger.log('📝 Updating progress:', { roleplayType, sessionResult });
 
-      if (error) throw error;
+      // Record session completion via API
+      const result = await accessLevelAPI.recordSessionCompletion(
+        user.id,
+        roleplayType,
+        sessionResult.mode || 'practice',
+        sessionResult
+      );
 
-      return data.map(session => ({
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to update progress');
+      }
+
+      // Reload progress data to reflect changes
+      await loadProgressData();
+
+      // Return unlock information
+      return {
+        success: true,
+        unlocks: result.unlocks || [],
+        message: result.message
+      };
+
+    } catch (error) {
+      logger.error('❌ Error updating progress:', error);
+      throw error;
+    }
+  }, [user?.id, loadProgressData]);
+
+  // Get recent activity for dashboard
+  const getRecentActivity = useCallback(async () => {
+    try {
+      const recentSessions = sessions.slice(0, 10).map(session => ({
+        id: session.id,
         roleplay_type: session.roleplay_type,
         mode: session.mode,
-        score: session.final_score,
         passed: session.passed,
+        score: session.score,
+        created_at: session.created_at,
         timeAgo: getTimeAgo(session.created_at)
       }));
+
+      return recentSessions;
     } catch (error) {
       logger.error('Error getting recent activity:', error);
       return [];
     }
-  }, [user?.id]);
+  }, [sessions]);
 
-  // Unlock next module (for 24 hours)
-  const unlockNextModule = useCallback(async (currentModule) => {
-    const moduleOrder = ['opener_practice', 'objection_practice', 'closing_practice'];
-    const currentIndex = moduleOrder.indexOf(currentModule);
-    
-    if (currentIndex === -1 || currentIndex === moduleOrder.length - 1) {
-      return { success: false, error: 'No next module' };
+  // Get overall statistics
+  const getOverallStats = useCallback(() => {
+    return overallStats;
+  }, [overallStats]);
+
+  // Check if user can access specific roleplay
+  const canAccessRoleplay = useCallback(async (roleplayType, mode = 'practice') => {
+    if (!user?.id) {
+      return { allowed: false, reason: 'Not authenticated' };
     }
 
-    const nextModule = moduleOrder[currentIndex + 1];
-    const unlockExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const result = await accessLevelAPI.checkModuleAccess(user.id, roleplayType, mode);
+      return {
+        allowed: result.success && result.access.unlocked,
+        reason: result.access?.reason || 'Access denied',
+        accessInfo: result.access
+      };
+    } catch (error) {
+      logger.error('Error checking roleplay access:', error);
+      return { allowed: false, reason: 'Access check failed' };
+    }
+  }, [user?.id]);
 
-    return await updateProgress(nextModule, {
-      unlock_expiry: unlockExpiry
-    });
-  }, [updateProgress]);
+  // Unlock module temporarily (admin function)
+  const unlockModuleTemporarily = useCallback(async (roleplayType, hours = 24) => {
+    if (!user?.id) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const result = await accessLevelAPI.unlockModuleTemporarily(user.id, roleplayType, hours);
+      
+      if (result.success) {
+        // Reload progress to reflect changes
+        await loadProgressData();
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Error unlocking module:', error);
+      throw error;
+    }
+  }, [user?.id, loadProgressData]);
+
+  // Get user access level
+  const getUserAccessLevel = useCallback(() => {
+    return userProfile?.access_level || 'limited';
+  }, [userProfile]);
+
+  // Helper function to format time ago
+  const getTimeAgo = (dateString) => {
+    const now = new Date();
+    const date = new Date(dateString);
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+    if (diffDays > 0) {
+      return `${diffDays}d ago`;
+    } else if (diffHours > 0) {
+      return `${diffHours}h ago`;
+    } else if (diffMinutes > 0) {
+      return `${diffMinutes}m ago`;
+    } else {
+      return 'Just now';
+    }
+  };
+
+  // Load data when user changes
+  useEffect(() => {
+    loadProgressData();
+  }, [loadProgressData]);
+
+  // Set up real-time subscriptions for progress updates
+  useEffect(() => {
+    if (!user?.id) return;
+
+    logger.log('📡 Setting up real-time progress subscriptions');
+
+    // Subscribe to user progress changes
+    const progressSubscription = supabase
+      .channel('progress_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_progress',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          logger.log('📡 Progress update received:', payload);
+          // Reload progress data when changes occur
+          loadProgressData();
+        }
+      )
+      .subscribe();
+
+    // Subscribe to session log changes
+    const sessionSubscription = supabase
+      .channel('session_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'session_logs',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          logger.log('📡 New session logged:', payload);
+          // Add new session to local state
+          setSessions(prev => [payload.new, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      logger.log('📡 Cleaning up real-time subscriptions');
+      supabase.removeChannel(progressSubscription);
+      supabase.removeChannel(sessionSubscription);
+    };
+  }, [user?.id, loadProgressData]);
 
   const value = {
-    userProgress,
+    // State
     loading,
-    updateProgress,
+    error,
+    progress,
+    sessions,
+    accessStatus,
+    overallStats,
+
+    // Functions
+    loadProgressData,
     getRoleplayAccess,
-    getOverallStats,
+    updateProgress,
     getRecentActivity,
-    unlockNextModule,
-    reloadProgress: loadUserProgress,
-    roleplayConfigs
+    getOverallStats,
+    canAccessRoleplay,
+    unlockModuleTemporarily,
+    getUserAccessLevel,
+
+    // Computed values
+    userAccessLevel: getUserAccessLevel(),
+    isUnlimitedUser: getUserAccessLevel() === 'unlimited',
+    isTrialUser: getUserAccessLevel() === 'trial',
+    isLimitedUser: getUserAccessLevel() === 'limited'
   };
 
   return (
@@ -313,3 +361,5 @@ export const ProgressProvider = ({ children }) => {
     </ProgressContext.Provider>
   );
 };
+
+export default ProgressProvider;
