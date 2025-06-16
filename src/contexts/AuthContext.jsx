@@ -18,11 +18,6 @@ export const AuthProvider = ({ children }) => {
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Add isAdmin function
-  const isAdmin = () => {
-    return userProfile?.is_admin === true;
-  };
-
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
@@ -407,6 +402,21 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Helper function to check if user is admin
+  const isAdmin = () => {
+    return userProfile?.role === 'admin' || user?.user_metadata?.role === 'admin';
+  };
+
+  // Helper function to check if user is authenticated
+  const isAuthenticated = () => {
+    return !!user;
+  };
+
+  // Helper function to get user role
+  const getUserRole = () => {
+    return userProfile?.role || user?.user_metadata?.role || 'user';
+  };
+
   const value = {
     user,
     userProfile,
@@ -416,7 +426,9 @@ export const AuthProvider = ({ children }) => {
     signOut,
     updateProfile,
     resetPassword,
-    isAdmin  // Add isAdmin to the context value
+    isAdmin,
+    isAuthenticated,
+    getUserRole
   };
 
   return (
