@@ -1,4 +1,4 @@
-// src/contexts/RoleplayContext.jsx - ULTRA-SIMPLE DEBUG VERSION
+// src/contexts/RoleplayContext.jsx - FIXED state synchronization
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { voiceService } from '../services/voiceService';
@@ -26,7 +26,7 @@ export const RoleplayProvider = ({ children }) => {
   const [currentMessage, setCurrentMessage] = useState('');
   const [conversationHistory, setConversationHistory] = useState([]);
   
-  // Session refs for stable references
+  // FIXED: Use refs for state that needs to be current in callbacks
   const sessionRef = useRef(null);
   const startTimeRef = useRef(null);
   const evaluationsRef = useRef([]);
@@ -34,6 +34,21 @@ export const RoleplayProvider = ({ children }) => {
   const aiPersonalityRef = useRef(null);
   const isEndingSessionRef = useRef(false);
   const exchangeCountRef = useRef(0);
+  const callStateRef = useRef('idle'); // FIXED: Add ref for callState
+  const isProcessingRef = useRef(false); // FIXED: Add ref for isProcessing
+
+  // FIXED: Update refs whenever state changes
+  const updateCallState = useCallback((newState) => {
+    console.log('🔄 [DEBUG] Updating call state from', callStateRef.current, 'to', newState);
+    callStateRef.current = newState;
+    setCallState(newState);
+  }, []);
+
+  const updateIsProcessing = useCallback((newValue) => {
+    console.log('🔄 [DEBUG] Updating isProcessing from', isProcessingRef.current, 'to', newValue);
+    isProcessingRef.current = newValue;
+    setIsProcessing(newValue);
+  }, []);
 
   // Character templates
   const getCharacterForRoleplay = useCallback((roleplayType) => {
@@ -89,6 +104,8 @@ export const RoleplayProvider = ({ children }) => {
       // Reset all flags
       isEndingSessionRef.current = false;
       exchangeCountRef.current = 0;
+      updateCallState('idle'); // Start with idle
+      updateIsProcessing(false);
       
       // Initialize voice service
       await voiceService.initialize();
@@ -116,8 +133,8 @@ export const RoleplayProvider = ({ children }) => {
       setCurrentSession(session);
       setConversationHistory([]);
       setSessionResults(null);
-      setCallState('dialing');
-      console.log('✅ [DEBUG] Session state reset');
+      updateCallState('dialing');
+      console.log('✅ [DEBUG] Session state reset, call state set to dialing');
       
       // Start the conversation flow after delay
       setTimeout(async () => {
@@ -127,7 +144,7 @@ export const RoleplayProvider = ({ children }) => {
         }
         
         console.log('🔄 [DEBUG] Setting call state to connected');
-        setCallState('connected');
+        updateCallState('connected'); // FIXED: Use updateCallState
         
         // AI greeting
         const greeting = character.greeting;
@@ -143,13 +160,15 @@ export const RoleplayProvider = ({ children }) => {
         setConversationHistory([greetingEntry]);
         console.log('📝 [DEBUG] Added greeting to history');
         
-        // Start voice conversation with debugging
-        console.log('🎤 [DEBUG] Starting voice conversation...');
-        const success = voiceService.startConversation(
-          handleUserSpeech,
-          handleVoiceError
-        );
-        console.log('🎤 [DEBUG] Voice conversation started:', success);
+        // FIXED: Start voice conversation AFTER state is updated
+        setTimeout(() => {
+          console.log('🎤 [DEBUG] Starting voice conversation with state:', callStateRef.current);
+          const success = voiceService.startConversation(
+            handleUserSpeech,
+            handleVoiceError
+          );
+          console.log('🎤 [DEBUG] Voice conversation started:', success);
+        }, 100); // Small delay to ensure state is updated
         
         // Speak the greeting
         try {
@@ -168,28 +187,34 @@ export const RoleplayProvider = ({ children }) => {
       console.error('❌ [DEBUG] Error starting roleplay session:', error);
       throw error;
     }
-  }, [userProfile, getCharacterForRoleplay]);
+  }, [userProfile, getCharacterForRoleplay, updateCallState, updateIsProcessing]);
 
-  // ULTRA-SIMPLE: User speech handling with extensive debugging
+  // FIXED: User speech handling with ref-based state checks
   const handleUserSpeech = useCallback(async (transcript, confidence) => {
     console.log('🗣️ [DEBUG] ====== handleUserSpeech CALLED ======');
     console.log('🗣️ [DEBUG] Transcript:', transcript);
     console.log('🗣️ [DEBUG] Confidence:', confidence);
-    console.log('🗣️ [DEBUG] Current state:', {
+    console.log('🗣️ [DEBUG] Current state (useState):', {
       hasSession: !!sessionRef.current,
-      callState,
+      callState, // This might be stale
       isEnding: isEndingSessionRef.current,
-      isProcessing
+      isProcessing // This might be stale
+    });
+    console.log('🗣️ [DEBUG] Current state (useRef):', {
+      hasSession: !!sessionRef.current,
+      callState: callStateRef.current, // This is current
+      isEnding: isEndingSessionRef.current,
+      isProcessing: isProcessingRef.current // This is current
     });
 
-    // Check if session is valid
+    // FIXED: Use refs for current state
     if (!sessionRef.current) {
       console.log('⚠️ [DEBUG] No session, ignoring speech');
       return;
     }
 
-    if (callState !== 'connected') {
-      console.log('⚠️ [DEBUG] Call not connected, ignoring speech. State:', callState);
+    if (callStateRef.current !== 'connected') {
+      console.log('⚠️ [DEBUG] Call not connected, ignoring speech. State:', callStateRef.current);
       return;
     }
 
@@ -198,15 +223,15 @@ export const RoleplayProvider = ({ children }) => {
       return;
     }
 
-    // Check if already processing
-    if (isProcessing) {
+    // FIXED: Use ref for processing check
+    if (isProcessingRef.current) {
       console.log('⚠️ [DEBUG] Already processing, ignoring speech');
       return;
     }
 
     try {
       console.log('🔄 [DEBUG] Setting isProcessing to TRUE');
-      setIsProcessing(true);
+      updateIsProcessing(true);
 
       // Increment exchange counter
       exchangeCountRef.current += 1;
@@ -304,10 +329,10 @@ export const RoleplayProvider = ({ children }) => {
       }
     } finally {
       console.log('🔄 [DEBUG] Setting isProcessing to FALSE');
-      setIsProcessing(false);
+      updateIsProcessing(false);
       console.log('🗣️ [DEBUG] ====== handleUserSpeech COMPLETED ======');
     }
-  }, [callState, isProcessing, generateSimpleAIResponse]);
+  }, [updateIsProcessing, generateSimpleAIResponse]);
 
   // Handle voice errors
   const handleVoiceError = useCallback((error) => {
@@ -357,7 +382,7 @@ export const RoleplayProvider = ({ children }) => {
         }
       };
       
-      setCallState('ended');
+      updateCallState('ended');
       setSessionResults(results);
       console.log('✅ [DEBUG] Session ended with results:', results);
       
@@ -367,7 +392,7 @@ export const RoleplayProvider = ({ children }) => {
       console.error('❌ [DEBUG] Error ending session:', error);
       return null;
     }
-  }, [conversationHistory]);
+  }, [conversationHistory, updateCallState]);
 
   // Reset session
   const resetSession = useCallback(() => {
@@ -380,9 +405,9 @@ export const RoleplayProvider = ({ children }) => {
     voiceService.stopListening();
     
     setCurrentSession(null);
-    setCallState('idle');
+    updateCallState('idle');
     setSessionResults(null);
-    setIsProcessing(false);
+    updateIsProcessing(false);
     setCurrentMessage('');
     setConversationHistory([]);
     
@@ -395,7 +420,7 @@ export const RoleplayProvider = ({ children }) => {
     exchangeCountRef.current = 0;
     
     console.log('✅ [DEBUG] Session reset complete');
-  }, []);
+  }, [updateCallState, updateIsProcessing]);
 
   // Get session stats
   const getSessionStats = useCallback(() => {
