@@ -1,4 +1,4 @@
-// src/contexts/AuthContext.jsx - FIXED to include isAuthenticated() and isAdmin() functions
+// src/contexts/AuthContext.jsx - IMPROVED with better error handling
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
@@ -17,24 +17,34 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
+
     // Get initial session
     const getInitialSession = async () => {
       try {
+        logger.log('🔄 Getting initial session...');
+        
         const { data: { session }, error } = await supabase.auth.getSession();
+        
         if (error) {
-          logger.error('Error getting session:', error);
+          logger.error('Session error:', error);
+        } else if (session?.user && mounted) {
+          logger.log('✅ Found existing session for:', session.user.email);
+          setUser(session.user);
+          await loadUserProfile(session.user.id);
         } else {
-          setUser(session?.user ?? null);
-          if (session?.user) {
-            await loadUserProfile(session.user.id);
-          }
+          logger.log('ℹ️ No existing session found');
         }
       } catch (error) {
-        logger.error('Error in getInitialSession:', error);
+        logger.error('❌ Error getting initial session:', error);
       } finally {
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+          setInitialized(true);
+        }
       }
     };
 
@@ -43,7 +53,9 @@ export const AuthProvider = ({ children }) => {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        logger.log('Auth state changed:', event, session?.user?.email);
+        if (!mounted) return;
+
+        logger.log('🔄 Auth state changed:', event, session?.user?.email);
         
         setUser(session?.user ?? null);
         
@@ -53,118 +65,108 @@ export const AuthProvider = ({ children }) => {
           setUserProfile(null);
         }
         
-        setLoading(false);
+        if (!initialized) {
+          setLoading(false);
+          setInitialized(true);
+        }
       }
     );
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [initialized]);
 
   const loadUserProfile = async (userId) => {
     try {
-      logger.log('Loading user profile for:', userId);
+      logger.log('👤 Loading user profile for:', userId);
       
-      // First try to get from users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (userError) {
-        logger.warn('Users table error:', userError.message, 'Code:', userError.code);
-        
-        // If table doesn't exist or access denied, fall back to auth metadata
-        if (userError.code === 'PGRST116' || userError.code === '42P01' || userError.status === 406) {
-          logger.log('Falling back to auth metadata...');
-          
-          const { data: { user }, error: authError } = await supabase.auth.getUser();
-          if (authError) {
-            logger.error('Error getting auth user:', authError);
-            return;
-          }
-
-          if (user?.user_metadata) {
-            const profileFromMetadata = {
-              id: user.id,
-              email: user.email,
-              first_name: user.user_metadata.first_name,
-              prospect_job_title: user.user_metadata.prospect_job_title,
-              prospect_industry: user.user_metadata.prospect_industry,
-              custom_behavior_notes: user.user_metadata.custom_behavior_notes,
-              role: user.user_metadata.role || 'user' // Default role
-            };
-            
-            logger.log('Profile loaded from metadata:', profileFromMetadata);
-            setUserProfile(profileFromMetadata);
-          }
-          return;
-        } else {
-          logger.error('Unexpected error loading user profile:', userError);
-          return;
-        }
+      // First try auth user metadata
+      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError) {
+        logger.error('Auth user error:', authError);
+        return;
       }
 
-      if (userData) {
-        logger.log('Profile loaded from users table:', userData);
-        setUserProfile(userData);
-      } else {
-        logger.log('No user data found, falling back to auth metadata...');
-        
-        // Fallback to auth metadata
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError) {
-          logger.error('Error getting auth user:', authError);
-          return;
-        }
+      // Set basic profile from auth metadata
+      const basicProfile = {
+        id: authUser.id,
+        email: authUser.email,
+        first_name: authUser.user_metadata?.first_name || 'User',
+        prospect_job_title: authUser.user_metadata?.prospect_job_title,
+        prospect_industry: authUser.user_metadata?.prospect_industry,
+        custom_behavior_notes: authUser.user_metadata?.custom_behavior_notes,
+        role: authUser.user_metadata?.role || 'user',
+        access_level: authUser.user_metadata?.access_level || 'limited',
+        is_admin: authUser.user_metadata?.role === 'admin'
+      };
 
-        if (user?.user_metadata) {
-          setUserProfile({
-            id: user.id,
-            email: user.email,
-            first_name: user.user_metadata.first_name,
-            prospect_job_title: user.user_metadata.prospect_job_title,
-            prospect_industry: user.user_metadata.prospect_industry,
-            custom_behavior_notes: user.user_metadata.custom_behavior_notes,
-            role: user.user_metadata.role || 'user' // Default role
-          });
-        }
-      }
-    } catch (error) {
-      logger.error('Error in loadUserProfile:', error);
-      
-      // Last resort: try to get basic info from auth
+      setUserProfile(basicProfile);
+      logger.log('✅ Basic profile loaded from auth metadata');
+
+      // Try to enhance with database data (non-blocking)
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          setUserProfile({
-            id: user.id,
-            email: user.email,
-            first_name: user.user_metadata?.first_name || 'User',
-            role: user.user_metadata?.role || 'user'
-          });
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (!userError && userData) {
+          // Merge database data with auth metadata
+          const enhancedProfile = {
+            ...basicProfile,
+            ...userData,
+            // Ensure critical fields from auth take precedence
+            id: authUser.id,
+            email: authUser.email
+          };
+          
+          setUserProfile(enhancedProfile);
+          logger.log('✅ Profile enhanced with database data');
+        } else if (userError.code !== 'PGRST116') {
+          // Only log if it's not a "no rows" error
+          logger.warn('Database profile lookup warning:', userError.message);
         }
-      } catch (fallbackError) {
-        logger.error('Fallback profile load failed:', fallbackError);
+      } catch (dbError) {
+        logger.warn('Database profile error (non-critical):', dbError.message);
+        // Keep the basic profile from auth metadata
       }
+
+    } catch (error) {
+      logger.error('❌ Error loading user profile:', error);
+      
+      // Set minimal profile to prevent complete failure
+      setUserProfile({
+        id: userId,
+        email: 'unknown@example.com',
+        first_name: 'User',
+        role: 'user',
+        access_level: 'limited',
+        is_admin: false
+      });
     }
   };
 
-  // FIXED: Add isAuthenticated function that your ProtectedRoute expects
+  // Fixed authentication check functions
   const isAuthenticated = () => {
     return !loading && !!user && !!userProfile;
   };
 
-  // FIXED: Add isAdmin function that your ProtectedRoute expects
   const isAdmin = () => {
-    return isAuthenticated() && (userProfile?.role === 'admin' || userProfile?.role === 'super_admin');
+    return isAuthenticated() && (
+      userProfile?.role === 'admin' || 
+      userProfile?.role === 'super_admin' ||
+      userProfile?.is_admin === true
+    );
   };
 
   const signUp = async (email, password, profileData) => {
     try {
-      logger.log('Starting signup process for verified email:', email);
+      logger.log('📝 Starting signup for:', email);
       
-      // Try to sign up the user
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -174,64 +176,37 @@ export const AuthProvider = ({ children }) => {
             prospect_job_title: profileData.prospect_job_title,
             prospect_industry: profileData.prospect_industry,
             custom_behavior_notes: profileData.custom_behavior_notes || '',
-            role: 'user', // Default role for new users
-            email_verified: true // Mark as verified since we verified it
-          },
-          // Don't send confirmation email since we already verified
-          emailRedirectTo: undefined
+            role: 'user',
+            access_level: 'trial', // Start with trial access
+            email_verified: true
+          }
         }
       });
 
       if (error) {
         logger.error('Signup error:', error);
         
-        // Handle the "User already registered" error specifically
         if (error.message?.includes('User already registered')) {
-          logger.log('User already exists, attempting to sign in...');
-          
-          // Try to sign in the existing user instead
-          const signInResult = await signIn(email, password);
-          
-          if (signInResult.success) {
-            // Successfully signed in existing user
-            // Now make sure they have a profile in the users table
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-              await createUserProfile(user.id, {
-                email: user.email,
-                ...profileData
-              });
-            }
-            
-            return {
-              success: true,
-              user: signInResult.user,
-              message: 'Signed in to existing account and updated profile'
-            };
-          } else {
-            // Existing user but wrong password
-            return {
-              success: false,
-              error: 'An account with this email already exists. Please use the login page or reset your password if you forgot it.'
-            };
-          }
+          logger.log('User exists, attempting signin...');
+          return await signIn(email, password);
         }
         
-        return {
-          success: false,
-          error: error.message
-        };
+        return { success: false, error: error.message };
       }
 
       if (data.user) {
-        logger.log('User created successfully');
+        logger.log('✅ User created successfully');
         
-        // Create user profile record
-        await createUserProfile(data.user.id, {
-          email: data.user.email,
-          ...profileData,
-          is_verified: true // Mark as verified
-        });
+        // Try to create database profile (non-blocking)
+        try {
+          await createUserProfile(data.user.id, {
+            email: data.user.email,
+            ...profileData
+          });
+        } catch (profileError) {
+          logger.warn('Profile creation warning:', profileError);
+          // Don't fail signup if profile creation fails
+        }
 
         return {
           success: true,
@@ -240,23 +215,17 @@ export const AuthProvider = ({ children }) => {
         };
       }
 
-      return {
-        success: false,
-        error: 'Unexpected signup response'
-      };
+      return { success: false, error: 'Unexpected signup response' };
 
     } catch (error) {
-      logger.error('Signup error:', error);
-      return {
-        success: false,
-        error: 'An unexpected error occurred during signup'
-      };
+      logger.error('❌ Signup error:', error);
+      return { success: false, error: 'Signup failed' };
     }
   };
 
   const createUserProfile = async (userId, profileData) => {
     try {
-      logger.log('Creating user profile:', userId);
+      logger.log('👤 Creating user profile for:', userId);
       
       const { error } = await supabase
         .from('users')
@@ -267,33 +236,26 @@ export const AuthProvider = ({ children }) => {
           prospect_job_title: profileData.prospect_job_title,
           prospect_industry: profileData.prospect_industry,
           custom_behavior_notes: profileData.custom_behavior_notes || '',
-          role: 'user', // Default role
-          is_verified: true, // Mark as verified since we verified the email
+          role: 'user',
+          access_level: 'trial',
+          is_admin: false,
+          is_verified: true,
           created_at: new Date().toISOString()
         }]);
 
-      if (error) {
-        logger.warn('Could not create user profile in users table:', error.message);
-        
-        // If users table doesn't exist or access denied, just log and continue
-        // The profile data is already stored in auth.user_metadata
-        if (error.code === '42P01' || error.status === 406) {
-          logger.log('Users table not accessible, profile data stored in auth metadata only');
-        } else {
-          logger.error('Unexpected error creating user profile:', error);
-        }
+      if (error && error.code !== '23505') { // Ignore duplicate key errors
+        logger.warn('Profile creation warning:', error.message);
       } else {
-        logger.log('User profile created successfully in users table');
+        logger.log('✅ User profile created successfully');
       }
     } catch (error) {
-      logger.error('Error in createUserProfile:', error);
-      // Don't throw - the user can still function with auth metadata
+      logger.warn('Profile creation error (non-critical):', error);
     }
   };
 
   const signIn = async (email, password) => {
     try {
-      logger.log('Attempting to sign in:', email);
+      logger.log('🔑 Attempting signin for:', email);
       
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -301,73 +263,66 @@ export const AuthProvider = ({ children }) => {
       });
 
       if (error) {
-        logger.error('Sign in error:', error);
-        return {
-          success: false,
-          error: error.message
-        };
+        logger.error('Signin error:', error);
+        return { success: false, error: error.message };
       }
 
       if (data.user) {
-        logger.log('Sign in successful');
-        return {
-          success: true,
-          user: data.user
-        };
+        logger.log('✅ Signin successful');
+        return { success: true, user: data.user };
       }
 
-      return {
-        success: false,
-        error: 'Invalid credentials'
-      };
+      return { success: false, error: 'Invalid credentials' };
 
     } catch (error) {
-      logger.error('Sign in error:', error);
-      return {
-        success: false,
-        error: 'An unexpected error occurred during sign in'
-      };
+      logger.error('❌ Signin error:', error);
+      return { success: false, error: 'Signin failed' };
     }
   };
 
   const signOut = async () => {
     try {
+      logger.log('🚪 Signing out...');
+      
       const { error } = await supabase.auth.signOut();
+      
       if (error) {
-        logger.error('Sign out error:', error);
+        logger.error('Signout error:', error);
         return { success: false, error: error.message };
       }
       
       setUser(null);
       setUserProfile(null);
+      
+      logger.log('✅ Signed out successfully');
       return { success: true };
     } catch (error) {
-      logger.error('Sign out error:', error);
-      return { success: false, error: 'Failed to sign out' };
+      logger.error('❌ Signout error:', error);
+      return { success: false, error: 'Signout failed' };
     }
   };
 
   const updateProfile = async (updates) => {
     try {
       if (!user) {
-        return { success: false, error: 'No user logged in' };
+        return { success: false, error: 'Not authenticated' };
       }
 
-      logger.log('Updating user profile with:', updates);
+      logger.log('📝 Updating profile with:', Object.keys(updates));
 
-      // Update auth metadata first (this always works)
+      // Update auth metadata
       const { error: authError } = await supabase.auth.updateUser({
         data: updates
       });
 
       if (authError) {
-        logger.error('Error updating auth metadata:', authError);
-        return { success: false, error: 'Failed to update profile metadata' };
+        logger.error('Auth update error:', authError);
+        return { success: false, error: 'Failed to update auth data' };
       }
 
-      // Try to update users table if it exists
+      // Try to update database (non-blocking)
       try {
-        const { error: profileError } = await supabase
+        const { error: dbError } = await supabase
           .from('users')
           .update({
             ...updates,
@@ -375,37 +330,27 @@ export const AuthProvider = ({ children }) => {
           })
           .eq('id', user.id);
 
-        if (profileError) {
-          logger.warn('Could not update users table:', profileError.message);
-          
-          // If table doesn't exist or access denied, that's okay
-          if (profileError.code !== '42P01' && profileError.status !== 406) {
-            logger.error('Unexpected error updating users table:', profileError);
-          }
-        } else {
-          logger.log('Users table updated successfully');
+        if (dbError) {
+          logger.warn('Database update warning:', dbError.message);
         }
-      } catch (tableError) {
-        logger.warn('Users table update failed:', tableError);
-        // Continue anyway - auth metadata was updated
+      } catch (dbError) {
+        logger.warn('Database update error (non-critical):', dbError);
       }
 
-      // Reload profile to get latest data
+      // Reload profile
       await loadUserProfile(user.id);
 
       return { success: true };
     } catch (error) {
-      logger.error('Error updating profile:', error);
-      return { success: false, error: 'Failed to update profile' };
+      logger.error('❌ Profile update error:', error);
+      return { success: false, error: 'Update failed' };
     }
   };
 
   const resetPassword = async (email) => {
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`
-      });
-
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      
       if (error) {
         return { success: false, error: error.message };
       }
@@ -413,17 +358,17 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       logger.error('Reset password error:', error);
-      return { success: false, error: 'Failed to send reset email' };
+      return { success: false, error: 'Reset failed' };
     }
   };
 
-  // FIXED: Include the missing functions that ProtectedRoute expects
   const value = {
     user,
     userProfile,
     loading,
-    isAuthenticated, // ✅ Function that returns boolean
-    isAdmin, // ✅ Function that returns boolean
+    initialized,
+    isAuthenticated,
+    isAdmin,
     signUp,
     signIn,
     signOut,
