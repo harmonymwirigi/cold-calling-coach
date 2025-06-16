@@ -1,4 +1,4 @@
-// src/components/roleplay/UnifiedPhoneInterface.jsx - CLEAN & RELIABLE
+// src/components/roleplay/UnifiedPhoneInterface.jsx - FIXED hangup button and debug
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MessageCircle, ArrowLeft } from 'lucide-react';
@@ -118,13 +118,16 @@ const UnifiedPhoneInterface = () => {
 
     // Cleanup on unmount
     return () => {
+      logger.log('🧹 Component unmounting, cleaning up...');
       if (currentSession) {
         endSession('component_unmount');
       }
       resetSession();
-      clearInterval(durationInterval.current);
+      if (durationInterval.current) {
+        clearInterval(durationInterval.current);
+      }
     };
-  }, [type, mode, startRoleplaySession, getRoleplayAccess, userProfile, deviceType]);
+  }, [type, mode, startRoleplaySession, getRoleplayAccess, userProfile, deviceType, currentSession, endSession, resetSession]);
 
   // Handle call duration timer
   useEffect(() => {
@@ -165,6 +168,8 @@ const UnifiedPhoneInterface = () => {
 
   // Handle microphone button click
   const handleMicClick = useCallback(async () => {
+    logger.log('🎤 Microphone button clicked');
+
     if (micPermission === 'denied') {
       setError('Microphone permission denied. Please enable microphone access in your browser settings.');
       return;
@@ -187,8 +192,10 @@ const UnifiedPhoneInterface = () => {
       const { voiceService } = await import('../../services/voiceService');
       
       if (voiceService.isListening) {
+        logger.log('Stopping listening...');
         voiceService.stopListening();
       } else {
+        logger.log('Starting listening...');
         const started = voiceService.startListening();
         if (!started) {
           setError('Failed to start microphone. Try the text input option.');
@@ -217,40 +224,67 @@ const UnifiedPhoneInterface = () => {
     }
   }, [manualInput, handleUserResponse]);
 
-  // Handle hang up
+  // FIXED: Handle hang up with proper error handling and debugging
   const handleHangUp = useCallback(async () => {
     try {
-      logger.log('📞 User hang up');
+      logger.log('📞 Hangup button clicked');
       
+      if (!endSession) {
+        logger.error('❌ endSession function not available');
+        navigate('/dashboard');
+        return;
+      }
+
+      logger.log('📞 Ending session...');
       const sessionResult = await endSession('user_hangup');
       
+      logger.log('📞 Session ended, result:', sessionResult);
+      
       // Update progress if needed
-      if (sessionResult) {
-        const progressUpdate = {
-          total_attempts: 1,
-          total_passes: sessionResult.passed ? 1 : 0,
-          last_completed: new Date().toISOString()
-        };
+      if (sessionResult && updateProgress) {
+        try {
+          const progressUpdate = {
+            total_attempts: 1,
+            total_passes: sessionResult.passed ? 1 : 0,
+            last_completed: new Date().toISOString()
+          };
 
-        if (mode === 'marathon' && sessionResult.passed) {
-          const currentProgress = getRoleplayAccess(type);
-          progressUpdate.marathon_passes = (currentProgress.marathon_passes || 0) + 1;
+          if (mode === 'marathon' && sessionResult.passed) {
+            const currentProgress = getRoleplayAccess(type);
+            progressUpdate.marathon_passes = (currentProgress.marathon_passes || 0) + 1;
+          }
+
+          await updateProgress(type, progressUpdate);
+          logger.log('✅ Progress updated successfully');
+        } catch (progressError) {
+          logger.error('❌ Error updating progress:', progressError);
         }
-
-        await updateProgress(type, progressUpdate);
       }
       
+      // Navigate back to dashboard after a brief delay
+      setTimeout(() => {
+        logger.log('📞 Navigating to dashboard');
+        navigate('/dashboard');
+      }, 1000);
+      
     } catch (error) {
-      logger.error('❌ Error ending call:', error);
+      logger.error('❌ Error in hangup handler:', error);
+      // Force navigation even if there's an error
+      navigate('/dashboard');
     }
-  }, [endSession, mode, type, getRoleplayAccess, updateProgress]);
+  }, [endSession, mode, type, getRoleplayAccess, updateProgress, navigate]);
 
   // Handle back navigation
   const handleGoBack = useCallback(() => {
+    logger.log('⬅️ Back button clicked');
+    
     if (currentSession && callState !== 'ended') {
+      logger.log('⬅️ Session active, hanging up first...');
       handleHangUp();
+    } else {
+      logger.log('⬅️ No active session, navigating directly');
+      navigate('/dashboard');
     }
-    navigate('/dashboard');
   }, [currentSession, callState, handleHangUp, navigate]);
 
   // Get call state display
@@ -347,6 +381,13 @@ const UnifiedPhoneInterface = () => {
           >
             Dismiss
           </button>
+        </div>
+      )}
+
+      {/* Debug Info */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="bg-yellow-600 text-white p-2 text-center text-xs">
+          Debug: callState={callState} | session={currentSession?.id?.slice(-6)} | processing={isProcessing ? 'yes' : 'no'}
         </div>
       )}
 
@@ -466,7 +507,7 @@ const UnifiedPhoneInterface = () => {
               </div>
             )}
 
-            {/* Hang Up Button */}
+            {/* FIXED: Hang Up Button with better debugging */}
             <div className="flex justify-center pt-4">
               <button
                 onClick={handleHangUp}

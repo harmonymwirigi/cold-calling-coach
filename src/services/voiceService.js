@@ -1,4 +1,4 @@
-// src/services/voiceService.js - COMPLETELY REBUILT FOR RELIABILITY
+// src/services/voiceService.js - FIXED callback integration
 class VoiceService {
     constructor() {
       this.isInitialized = false;
@@ -167,9 +167,19 @@ class VoiceService {
         if (isFinal && transcript.length > 2) {
           this.lastSpeechTime = Date.now();
           
+          // FIXED: Add debugging and error handling for callback
+          console.log('🔄 Calling user speech callback with:', transcript);
+          
           // Send to callback if available
           if (this.onUserSpeechCallback) {
-            this.onUserSpeechCallback(transcript, confidence);
+            try {
+              this.onUserSpeechCallback(transcript, confidence);
+              console.log('✅ User speech callback completed');
+            } catch (callbackError) {
+              console.error('❌ Error in user speech callback:', callbackError);
+            }
+          } else {
+            console.warn('⚠️ No user speech callback set');
           }
           
           // Stop listening since we got a final result
@@ -229,9 +239,15 @@ class VoiceService {
     startConversation(onUserSpeechCallback, onErrorCallback) {
       console.log('🎬 Starting conversation flow');
       
+      // FIXED: Ensure callbacks are properly set with debugging
       this.onUserSpeechCallback = onUserSpeechCallback;
       this.onErrorCallback = onErrorCallback;
       this.conversationActive = true;
+      
+      console.log('✅ Conversation callbacks set:', {
+        hasUserSpeechCallback: !!this.onUserSpeechCallback,
+        hasErrorCallback: !!this.onErrorCallback
+      });
       
       return true;
     }
