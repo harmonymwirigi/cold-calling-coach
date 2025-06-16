@@ -1,8 +1,8 @@
-// src/contexts/RoleplayContext.jsx - INTEGRATED WITH OPENAI SERVICE
+// src/contexts/RoleplayContext.jsx - FINAL POLISHED VERSION
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { voiceService } from '../services/voiceService';
-import { openAIService } from '../services/openaiService'; // FIXED: Import OpenAI service
+import { openAIService } from '../services/openaiService';
 import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
 
@@ -27,7 +27,7 @@ export const RoleplayProvider = ({ children }) => {
   const [currentMessage, setCurrentMessage] = useState('');
   const [conversationHistory, setConversationHistory] = useState([]);
   
-  // FIXED: Use refs for state that needs to be current in callbacks
+  // Use refs for state that needs to be current in callbacks
   const sessionRef = useRef(null);
   const startTimeRef = useRef(null);
   const evaluationsRef = useRef([]);
@@ -38,7 +38,7 @@ export const RoleplayProvider = ({ children }) => {
   const callStateRef = useRef('idle');
   const isProcessingRef = useRef(false);
 
-  // FIXED: Update refs whenever state changes
+  // Update refs whenever state changes
   const updateCallState = useCallback((newState) => {
     console.log('🔄 [DEBUG] Updating call state from', callStateRef.current, 'to', newState);
     callStateRef.current = newState;
@@ -99,7 +99,7 @@ export const RoleplayProvider = ({ children }) => {
     return characters[roleplayType] || characters.opener_practice;
   }, []);
 
-  // FIXED: Use OpenAI service for realistic AI responses
+  // Use OpenAI service for realistic AI responses
   const generateAIResponse = useCallback(async (userInput, context) => {
     try {
       console.log('🤖 [DEBUG] Generating AI response using OpenAI service...');
@@ -117,7 +117,7 @@ export const RoleplayProvider = ({ children }) => {
         };
       }
 
-      // FIXED: Use OpenAI service with proper context
+      // Use OpenAI service with proper context
       const result = await openAIService.getProspectResponse(userInput, {
         roleplayType: sessionRef.current?.roleplayType,
         mode: sessionRef.current?.mode,
@@ -140,14 +140,20 @@ export const RoleplayProvider = ({ children }) => {
           conversationStageRef.current = result.nextStage;
         }
         
-        // Store evaluation if provided
+        // FIXED: Store evaluation with proper scoring
         if (result.evaluation) {
+          const evaluation = {
+            ...result.evaluation,
+            score: result.evaluation.score || (result.evaluation.passed ? 85 : 65), // Ensure score exists
+            timestamp: Date.now()
+          };
+          
           evaluationsRef.current.push({
             stage: result.stage,
-            evaluation: result.evaluation,
+            evaluation,
             timestamp: Date.now()
           });
-          console.log('📊 [DEBUG] Added evaluation:', result.evaluation);
+          console.log('📊 [DEBUG] Added evaluation with score:', evaluation.score);
         }
       }
 
@@ -156,13 +162,13 @@ export const RoleplayProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ [DEBUG] Error generating AI response:', error);
       
-      // FIXED: Always provide a response, never fail completely
+      // Always provide a response with score
       const emergencyResponse = "Could you repeat that? I didn't catch what you said.";
       
       return {
-        success: true, // Still return success to continue flow
+        success: true,
         response: emergencyResponse,
-        evaluation: { passed: true, feedback: 'Keep practicing!' },
+        evaluation: { passed: true, feedback: 'Keep practicing!', score: 70 },
         stage: conversationStageRef.current,
         nextStage: conversationStageRef.current,
         shouldHangUp: false
@@ -181,7 +187,7 @@ export const RoleplayProvider = ({ children }) => {
       updateCallState('idle');
       updateIsProcessing(false);
       
-      // FIXED: Initialize both voice and OpenAI services
+      // Initialize both voice and OpenAI services
       console.log('🔄 [DEBUG] Initializing services...');
       await voiceService.initialize();
       await openAIService.initialize();
@@ -206,7 +212,7 @@ export const RoleplayProvider = ({ children }) => {
       evaluationsRef.current = [];
       conversationStageRef.current = 'greeting';
       
-      // FIXED: Reset OpenAI conversation state
+      // Reset OpenAI conversation state
       openAIService.resetConversation();
       
       setCurrentSession(session);
@@ -239,7 +245,7 @@ export const RoleplayProvider = ({ children }) => {
         setConversationHistory([greetingEntry]);
         console.log('📝 [DEBUG] Added greeting to history');
         
-        // FIXED: Start voice conversation AFTER state is updated
+        // Start voice conversation AFTER state is updated
         setTimeout(() => {
           console.log('🎤 [DEBUG] Starting voice conversation with state:', callStateRef.current);
           const success = voiceService.startConversation(
@@ -268,7 +274,7 @@ export const RoleplayProvider = ({ children }) => {
     }
   }, [userProfile, getCharacterForRoleplay, updateCallState, updateIsProcessing]);
 
-  // FIXED: User speech handling with OpenAI integration
+  // User speech handling with OpenAI integration
   const handleUserSpeech = useCallback(async (transcript, confidence) => {
     console.log('🗣️ [DEBUG] ====== handleUserSpeech CALLED ======');
     console.log('🗣️ [DEBUG] Transcript:', transcript);
@@ -280,7 +286,7 @@ export const RoleplayProvider = ({ children }) => {
       isProcessing: isProcessingRef.current
     });
 
-    // FIXED: Use refs for current state
+    // Use refs for current state
     if (!sessionRef.current) {
       console.log('⚠️ [DEBUG] No session, ignoring speech');
       return;
@@ -324,7 +330,7 @@ export const RoleplayProvider = ({ children }) => {
 
       console.log('🤖 [DEBUG] About to generate AI response using OpenAI service...');
       
-      // FIXED: Generate AI response using OpenAI service
+      // Generate AI response using OpenAI service
       const aiResult = await generateAIResponse(transcript, {
         roleplayType: sessionRef.current.roleplayType,
         mode: sessionRef.current.mode
@@ -431,7 +437,7 @@ export const RoleplayProvider = ({ children }) => {
     console.error('🎤 [DEBUG] Voice error:', error);
   }, []);
 
-  // End session
+  // FIXED: Better session ending with immediate voice cleanup
   const endSession = useCallback(async (reason = 'completed') => {
     if (!sessionRef.current || isEndingSessionRef.current) {
       console.log('⚠️ [DEBUG] Session already ending or no session');
@@ -441,25 +447,42 @@ export const RoleplayProvider = ({ children }) => {
     try {
       console.log('🏁 [DEBUG] Ending session:', reason);
       
-      // Set ending flag immediately
+      // FIXED: Set ending flag immediately and stop voice FIRST
       isEndingSessionRef.current = true;
       
-      // Stop all voice activities
+      // FIXED: Immediately stop all voice activities with more thorough cleanup
+      console.log('🔇 [DEBUG] Stopping voice service immediately...');
       voiceService.stopConversation();
       voiceService.stopSpeaking();
       voiceService.stopListening();
       
-      // FIXED: Reset OpenAI conversation state
+      // FIXED: Small delay to ensure voice service cleanup completes
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Reset OpenAI conversation state
       openAIService.resetConversation();
       console.log('🔇 [DEBUG] Voice service and OpenAI stopped');
       
       const endTime = Date.now();
       const duration = Math.floor((endTime - startTimeRef.current) / 1000);
       
-      // Calculate results
+      // FIXED: Better metrics calculation to avoid NaN
       const totalEvaluations = evaluationsRef.current.length;
       const passedEvaluations = evaluationsRef.current.filter(e => e.evaluation?.passed).length;
       const overallPassed = totalEvaluations > 0 ? (passedEvaluations / totalEvaluations) >= 0.6 : exchangeCountRef.current >= 2;
+      
+      // FIXED: Calculate average score properly with fallback
+      let averageScore = 0;
+      if (totalEvaluations > 0) {
+        const totalScore = evaluationsRef.current.reduce((sum, e) => {
+          const score = e.evaluation?.score || (e.evaluation?.passed ? 75 : 50);
+          return sum + score;
+        }, 0);
+        averageScore = Math.round(totalScore / totalEvaluations);
+      } else {
+        // Fallback scoring based on exchanges
+        averageScore = exchangeCountRef.current >= 2 ? 80 : 60;
+      }
       
       const results = {
         sessionId: sessionRef.current.id,
@@ -474,15 +497,14 @@ export const RoleplayProvider = ({ children }) => {
         metrics: {
           totalStages: totalEvaluations,
           passedStages: passedEvaluations,
-          passRate: totalEvaluations > 0 ? (passedEvaluations / totalEvaluations) : 0,
-          averageScore: totalEvaluations > 0 ? 
-            evaluationsRef.current.reduce((sum, e) => sum + e.evaluation.score, 0) / totalEvaluations : 0
+          passRate: totalEvaluations > 0 ? Math.round((passedEvaluations / totalEvaluations) * 100) : (exchangeCountRef.current >= 2 ? 100 : 0),
+          averageScore // FIXED: This should never be NaN now
         }
       };
       
       updateCallState('ended');
       setSessionResults(results);
-      console.log('✅ [DEBUG] Session ended with results:', results);
+      console.log('✅ [DEBUG] Session ended with results. Average score:', averageScore);
       
       // Log session to database if available
       if (userProfile?.id) {
@@ -518,13 +540,16 @@ export const RoleplayProvider = ({ children }) => {
   const resetSession = useCallback(() => {
     console.log('🔄 [DEBUG] Resetting session');
     
+    // FIXED: More thorough cleanup
     isEndingSessionRef.current = true;
     
+    // Stop voice service multiple times to ensure cleanup
     voiceService.stopConversation();
     voiceService.stopSpeaking();
     voiceService.stopListening();
+    voiceService.cleanup(); // FIXED: Call cleanup method
     
-    // FIXED: Reset OpenAI conversation state
+    // Reset OpenAI conversation state
     openAIService.resetConversation();
     
     setCurrentSession(null);
