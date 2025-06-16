@@ -1,7 +1,8 @@
-// src/components/auth/FunctionalRegisterForm.jsx
+// src/components/auth/FunctionalRegisterForm.jsx - Using Custom Verification Code System
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { apiHelpers } from '../../config/api';
 
 const FunctionalRegisterForm = () => {
   const [step, setStep] = useState(1);
@@ -18,7 +19,7 @@ const FunctionalRegisterForm = () => {
     customBehaviorNotes: ''
   });
 
-  const { sendVerificationCode, verifyEmailCode, signUp } = useAuth();
+  const { signUp } = useAuth();
   const navigate = useNavigate();
 
   const JOB_TITLES = [
@@ -86,6 +87,9 @@ const FunctionalRegisterForm = () => {
     return null;
   };
 
+  // Use API helpers for verification
+  const { sendVerificationCode, verifyEmailCode } = apiHelpers;
+
   const handleSubmitEmail = async () => {
     // Validate required fields
     if (!formData.firstName.trim() || !formData.email.trim() || !formData.password.trim()) {
@@ -110,14 +114,18 @@ const FunctionalRegisterForm = () => {
     setError('');
 
     try {
+      console.log('Sending verification code to:', formData.email);
       const result = await sendVerificationCode(formData.email, formData.firstName);
       
       if (result.success) {
+        console.log('Verification code sent successfully');
         setStep(2);
       } else {
+        console.error('Failed to send verification code:', result.error);
         setError(result.error || 'Failed to send verification code');
       }
     } catch (error) {
+      console.error('Unexpected error:', error);
       setError('An unexpected error occurred');
     } finally {
       setLoading(false);
@@ -134,14 +142,18 @@ const FunctionalRegisterForm = () => {
     setError('');
 
     try {
+      console.log('Verifying code:', formData.verificationCode);
       const result = await verifyEmailCode(formData.email, formData.verificationCode);
       
       if (result.success) {
+        console.log('Code verified successfully');
         setStep(3);
       } else {
+        console.error('Code verification failed:', result.error);
         setError(result.error || 'Invalid verification code');
       }
     } catch (error) {
+      console.error('Unexpected error:', error);
       setError('An unexpected error occurred');
     } finally {
       setLoading(false);
@@ -159,21 +171,26 @@ const FunctionalRegisterForm = () => {
 
     try {
       const profileData = {
-        prospectJobTitle: formData.prospectJobTitle,
-        prospectIndustry: formData.prospectIndustry,
-        customBehaviorNotes: formData.customBehaviorNotes
+        first_name: formData.firstName,
+        prospect_job_title: formData.prospectJobTitle,
+        prospect_industry: formData.prospectIndustry,
+        custom_behavior_notes: formData.customBehaviorNotes
       };
 
-      // Pass the password to signUp function
-      const result = await signUp(formData.email, formData.firstName, formData.password, profileData);
+      console.log('Creating user account with verified email');
+      // Now create the user account since email is verified
+      const result = await signUp(formData.email, formData.password, profileData);
       
       if (result.success) {
+        console.log('Account created successfully');
         // Registration successful - redirect to dashboard
         navigate('/dashboard');
       } else {
+        console.error('Account creation failed:', result.error);
         setError(result.error || 'Failed to create account');
       }
     } catch (error) {
+      console.error('Unexpected error:', error);
       setError('An unexpected error occurred');
     } finally {
       setLoading(false);
@@ -275,13 +292,18 @@ const FunctionalRegisterForm = () => {
           </div>
         )}
 
-        {/* Step 2: Verification */}
+        {/* Step 2: Verification Code */}
         {step === 2 && (
           <div className="space-y-6">
             <div className="text-center">
+              <div className="text-4xl mb-4">📧</div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Check Your Email
+              </h3>
               <p className="text-gray-600 mb-4">
-                We sent a 6-digit code to {formData.email}
+                We sent a 6-digit verification code to
               </p>
+              <p className="font-medium text-gray-900 mb-4">{formData.email}</p>
             </div>
             
             <div>
@@ -293,11 +315,14 @@ const FunctionalRegisterForm = () => {
                 required
                 maxLength="6"
                 value={formData.verificationCode}
-                onChange={(e) => updateFormData('verificationCode', e.target.value)}
+                onChange={(e) => updateFormData('verificationCode', e.target.value.replace(/\D/g, ''))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-lg tracking-widest"
                 placeholder="123456"
                 data-cy="verification-code"
               />
+              <p className="text-xs text-gray-500 mt-1 text-center">
+                Code expires in 10 minutes
+              </p>
             </div>
 
             {error && (
@@ -308,19 +333,29 @@ const FunctionalRegisterForm = () => {
 
             <button
               onClick={handleVerifyCode}
-              disabled={loading}
+              disabled={loading || formData.verificationCode.length !== 6}
               className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               data-cy="verify-code"
             >
               {loading ? 'Verifying...' : 'Verify Code'}
             </button>
 
-            <button
-              onClick={() => setStep(1)}
-              className="w-full text-gray-600 hover:text-gray-800"
-            >
-              ← Back to registration
-            </button>
+            <div className="text-center">
+              <button
+                onClick={() => setStep(1)}
+                className="text-gray-600 hover:text-gray-800 text-sm"
+              >
+                ← Back to registration
+              </button>
+              <span className="mx-2 text-gray-400">|</span>
+              <button
+                onClick={handleSubmitEmail}
+                disabled={loading}
+                className="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50"
+              >
+                Resend code
+              </button>
+            </div>
           </div>
         )}
 
@@ -328,11 +363,12 @@ const FunctionalRegisterForm = () => {
         {step === 3 && (
           <div className="space-y-6">
             <div className="text-center mb-4">
+              <div className="text-4xl mb-4">✅</div>
               <h3 className="text-lg font-semibold text-gray-900">
-                Set Up Your Practice Profile
+                Email Verified!
               </h3>
-              <p className="text-gray-600 text-sm">
-                Who will you be calling in your roleplays?
+              <p className="text-gray-600 text-sm mb-6">
+                Now let's set up your practice profile
               </p>
             </div>
 
@@ -396,7 +432,7 @@ const FunctionalRegisterForm = () => {
               className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               data-cy="complete-registration"
             >
-              {loading ? 'Creating Account...' : 'Start Practicing'}
+              {loading ? 'Creating Account...' : 'Complete Registration'}
             </button>
 
             <button

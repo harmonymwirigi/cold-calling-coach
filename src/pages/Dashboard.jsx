@@ -1,4 +1,4 @@
-// src/pages/Dashboard.jsx - Real Data Version
+// src/pages/Dashboard.jsx - Fixed PropTypes and Real Data Version
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Play, Star, Trophy, Clock, CheckCircle, AlertCircle } from 'lucide-react';
@@ -141,6 +141,23 @@ const RoleplayCard = ({
       </div>
     </div>
   );
+};
+
+// Fix PropTypes - should be on RoleplayCard, not Dashboard
+RoleplayCard.propTypes = {
+  roleplayType: PropTypes.string.isRequired,
+  title: PropTypes.string.isRequired,
+  description: PropTypes.string.isRequired,
+  access: PropTypes.shape({
+    unlocked: PropTypes.bool.isRequired,
+    unlockExpiry: PropTypes.string,
+    marathonPasses: PropTypes.number.isRequired,
+    legendCompleted: PropTypes.bool.isRequired
+  }).isRequired,
+  onStartPractice: PropTypes.func.isRequired,
+  onStartMarathon: PropTypes.func.isRequired,
+  onStartLegend: PropTypes.func.isRequired,
+  isFirst: PropTypes.bool
 };
 
 const Dashboard = () => {
@@ -370,22 +387,6 @@ const Dashboard = () => {
       </div>
     </div>
   );
-};
-
-Dashboard.propTypes = {
-  roleplayType: PropTypes.string.isRequired,
-  title: PropTypes.string.isRequired,
-  description: PropTypes.string.isRequired,
-  access: PropTypes.shape({
-    unlocked: PropTypes.bool.isRequired,
-    unlockExpiry: PropTypes.string,
-    marathonPasses: PropTypes.number.isRequired,
-    legendCompleted: PropTypes.bool.isRequired
-  }).isRequired,
-  onStartPractice: PropTypes.func.isRequired,
-  onStartMarathon: PropTypes.func.isRequired,
-  onStartLegend: PropTypes.func.isRequired,
-  isFirst: PropTypes.bool.isRequired
 };
 
 export default Dashboard;

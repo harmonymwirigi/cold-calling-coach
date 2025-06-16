@@ -57,7 +57,8 @@ const Sidebar = () => {
     }
   ];
 
-  if (isAdmin()) {
+  // Safely check if user is admin
+  if (typeof isAdmin === 'function' && isAdmin()) {
     settingsNavigation.push({
       name: 'Admin Panel',
       path: '/admin',

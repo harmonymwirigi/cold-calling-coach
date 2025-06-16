@@ -1,7 +1,8 @@
-// src/contexts/AuthContext.jsx
+// src/contexts/AuthContext.jsx - Updated for Custom Email Verification
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { authService, userService } from '../services/supabase';
+import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
+
 const AuthContext = createContext();
 
 export const useAuth = () => {
@@ -16,250 +17,406 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  // Initialize auth state
+  // Add isAdmin function
+  const isAdmin = () => {
+    return userProfile?.is_admin === true;
+  };
+
   useEffect(() => {
-    initializeAuth();
+    // Get initial session
+    const getInitialSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          logger.error('Error getting session:', error);
+        } else {
+          setUser(session?.user ?? null);
+          if (session?.user) {
+            await loadUserProfile(session.user.id);
+          }
+        }
+      } catch (error) {
+        logger.error('Error in getInitialSession:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    getInitialSession();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        logger.log('Auth state changed:', event, session?.user?.email);
+        
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          await loadUserProfile(session.user.id);
+        } else {
+          setUserProfile(null);
+        }
+        
+        setLoading(false);
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const initializeAuth = async () => {
+  const loadUserProfile = async (userId) => {
     try {
-      setLoading(true);
-      const session = await authService.getCurrentSession();
+      logger.log('Loading user profile for:', userId);
       
-      if (session?.user) {
-        setUser(session.user);
-        // Load user profile
-        const profileResult = await userService.getUserProfile(session.user.id);
-        if (profileResult.success) {
-          setUserProfile(profileResult.data);
+      // First try to get from users table
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (userError) {
+        logger.warn('Users table error:', userError.message, 'Code:', userError.code);
+        
+        // If table doesn't exist or access denied, fall back to auth metadata
+        if (userError.code === 'PGRST116' || userError.code === '42P01' || userError.status === 406) {
+          logger.log('Falling back to auth metadata...');
+          
+          const { data: { user }, error: authError } = await supabase.auth.getUser();
+          if (authError) {
+            logger.error('Error getting auth user:', authError);
+            return;
+          }
+
+          if (user?.user_metadata) {
+            const profileFromMetadata = {
+              id: user.id,
+              email: user.email,
+              first_name: user.user_metadata.first_name,
+              prospect_job_title: user.user_metadata.prospect_job_title,
+              prospect_industry: user.user_metadata.prospect_industry,
+              custom_behavior_notes: user.user_metadata.custom_behavior_notes
+            };
+            
+            logger.log('Profile loaded from metadata:', profileFromMetadata);
+            setUserProfile(profileFromMetadata);
+          }
+          return;
+        } else {
+          logger.error('Unexpected error loading user profile:', userError);
+          return;
+        }
+      }
+
+      if (userData) {
+        logger.log('Profile loaded from users table:', userData);
+        setUserProfile(userData);
+      } else {
+        logger.log('No user data found, falling back to auth metadata...');
+        
+        // Fallback to auth metadata
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) {
+          logger.error('Error getting auth user:', authError);
+          return;
+        }
+
+        if (user?.user_metadata) {
+          setUserProfile({
+            id: user.id,
+            email: user.email,
+            first_name: user.user_metadata.first_name,
+            prospect_job_title: user.user_metadata.prospect_job_title,
+            prospect_industry: user.user_metadata.prospect_industry,
+            custom_behavior_notes: user.user_metadata.custom_behavior_notes
+          });
         }
       }
     } catch (error) {
-      logger.error('Error initializing auth:', error);
-      setError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Send verification code
-  const sendVerificationCode = async (email, firstName) => {
-    try {
-      setError(null);
-      logger.log('AuthContext: Sending verification code for:', email);
+      logger.error('Error in loadUserProfile:', error);
       
-      const result = await authService.sendVerificationCode(email, firstName);
-      
-      if (result.success) {
-        logger.log('AuthContext: Verification code sent successfully');
-        return { success: true, message: result.message };
-      } else {
-        logger.error('AuthContext: Failed to send verification code:', result.error);
-        setError(result.error);
-        return { success: false, error: result.error };
+      // Last resort: try to get basic info from auth
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setUserProfile({
+            id: user.id,
+            email: user.email,
+            first_name: user.user_metadata?.first_name || 'User'
+          });
+        }
+      } catch (fallbackError) {
+        logger.error('Fallback profile load failed:', fallbackError);
       }
-    } catch (error) {
-      logger.error('AuthContext: Send verification error:', error);
-      const errorMessage = error.message || 'Failed to send verification code';
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
     }
   };
 
-  // Verify email code
-  const verifyEmailCode = async (email, code) => {
+  const signUp = async (email, password, profileData) => {
     try {
-      setError(null);
-      logger.log('AuthContext: Verifying email code for:', email);
+      logger.log('Starting signup process for verified email:', email);
       
-      const result = await authService.verifyEmailCode(email, code);
-      
-      if (result.success) {
-        logger.log('AuthContext: Email verification successful');
-        return { success: true, message: result.message };
-      } else {
-        logger.error('AuthContext: Email verification failed:', result.error);
-        setError(result.error);
-        return { success: false, error: result.error };
-      }
-    } catch (error) {
-      logger.error('AuthContext: Verify email error:', error);
-      const errorMessage = error.message || 'Failed to verify email code';
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
-    }
-  };
+      // Try to sign up the user
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            first_name: profileData.first_name,
+            prospect_job_title: profileData.prospect_job_title,
+            prospect_industry: profileData.prospect_industry,
+            custom_behavior_notes: profileData.custom_behavior_notes || '',
+            email_verified: true // Mark as verified since we verified it
+          },
+          // Don't send confirmation email since we already verified
+          emailRedirectTo: undefined
+        }
+      });
 
-  // Sign up user - UPDATED TO ACCEPT PASSWORD
-  const signUp = async (email, firstName, password, profileData) => {
-    try {
-      setError(null);
-      setLoading(true);
-      logger.log('AuthContext: Creating user account for:', email);
-      
-      const result = await authService.signUp(email, firstName, password, profileData);
-      
-      if (result.success) {
-        logger.log('AuthContext: User account created successfully');
-        setUser(result.user);
+      if (error) {
+        logger.error('Signup error:', error);
         
-        // Load user profile
-        const profileResult = await userService.getUserProfile(result.user.id);
-        if (profileResult.success) {
-          setUserProfile(profileResult.data);
+        // Handle the "User already registered" error specifically
+        if (error.message?.includes('User already registered')) {
+          logger.log('User already exists, attempting to sign in...');
+          
+          // Try to sign in the existing user instead
+          const signInResult = await signIn(email, password);
+          
+          if (signInResult.success) {
+            // Successfully signed in existing user
+            // Now make sure they have a profile in the users table
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              await createUserProfile(user.id, {
+                email: user.email,
+                ...profileData
+              });
+            }
+            
+            return {
+              success: true,
+              user: signInResult.user,
+              message: 'Signed in to existing account and updated profile'
+            };
+          } else {
+            // Existing user but wrong password
+            return {
+              success: false,
+              error: 'An account with this email already exists. Please use the login page or reset your password if you forgot it.'
+            };
+          }
         }
         
-        return { success: true, user: result.user };
-      } else {
-        logger.error('AuthContext: User signup failed:', result.error);
-        setError(result.error);
-        return { success: false, error: result.error };
+        return {
+          success: false,
+          error: error.message
+        };
       }
+
+      if (data.user) {
+        logger.log('User created successfully');
+        
+        // Create user profile record
+        await createUserProfile(data.user.id, {
+          email: data.user.email,
+          ...profileData,
+          is_verified: true // Mark as verified
+        });
+
+        return {
+          success: true,
+          user: data.user,
+          session: data.session
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Unexpected signup response'
+      };
+
     } catch (error) {
-      logger.error('AuthContext: Signup error:', error);
-      const errorMessage = error.message || 'Failed to create account';
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
-    } finally {
-      setLoading(false);
+      logger.error('Signup error:', error);
+      return {
+        success: false,
+        error: 'An unexpected error occurred during signup'
+      };
     }
   };
 
-  // Sign in user
+  const createUserProfile = async (userId, profileData) => {
+    try {
+      logger.log('Creating user profile:', userId);
+      
+      const { error } = await supabase
+        .from('users')
+        .insert([{
+          id: userId,
+          email: profileData.email,
+          first_name: profileData.first_name,
+          prospect_job_title: profileData.prospect_job_title,
+          prospect_industry: profileData.prospect_industry,
+          custom_behavior_notes: profileData.custom_behavior_notes || '',
+          is_verified: true, // Mark as verified since we verified the email
+          created_at: new Date().toISOString()
+        }]);
+
+      if (error) {
+        logger.warn('Could not create user profile in users table:', error.message);
+        
+        // If users table doesn't exist or access denied, just log and continue
+        // The profile data is already stored in auth.user_metadata
+        if (error.code === '42P01' || error.status === 406) {
+          logger.log('Users table not accessible, profile data stored in auth metadata only');
+        } else {
+          logger.error('Unexpected error creating user profile:', error);
+        }
+      } else {
+        logger.log('User profile created successfully in users table');
+      }
+    } catch (error) {
+      logger.error('Error in createUserProfile:', error);
+      // Don't throw - the user can still function with auth metadata
+    }
+  };
+
   const signIn = async (email, password) => {
     try {
-      setError(null);
-      setLoading(true);
+      logger.log('Attempting to sign in:', email);
       
-      const result = await authService.signIn(email, password);
-      
-      if (result.success) {
-        setUser(result.user);
-        
-        // Load user profile
-        const profileResult = await userService.getUserProfile(result.user.id);
-        if (profileResult.success) {
-          setUserProfile(profileResult.data);
-        }
-        
-        return { success: true, user: result.user };
-      } else {
-        setError(result.error);
-        return { success: false, error: result.error };
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+
+      if (error) {
+        logger.error('Sign in error:', error);
+        return {
+          success: false,
+          error: error.message
+        };
       }
+
+      if (data.user) {
+        logger.log('Sign in successful');
+        return {
+          success: true,
+          user: data.user
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Invalid credentials'
+      };
+
     } catch (error) {
-      logger.error('AuthContext: Sign in error:', error);
-      const errorMessage = error.message || 'Failed to sign in';
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
-    } finally {
-      setLoading(false);
+      logger.error('Sign in error:', error);
+      return {
+        success: false,
+        error: 'An unexpected error occurred during sign in'
+      };
     }
   };
 
-  // Sign out user
   const signOut = async () => {
     try {
-      setError(null);
-      const result = await authService.signOut();
-      
-      if (result.success) {
-        setUser(null);
-        setUserProfile(null);
-        return { success: true };
-      } else {
-        setError(result.error);
-        return { success: false, error: result.error };
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        logger.error('Sign out error:', error);
+        return { success: false, error: error.message };
       }
+      
+      setUser(null);
+      setUserProfile(null);
+      return { success: true };
     } catch (error) {
-      logger.error('AuthContext: Sign out error:', error);
-      const errorMessage = error.message || 'Failed to sign out';
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
+      logger.error('Sign out error:', error);
+      return { success: false, error: 'Failed to sign out' };
     }
   };
 
-  // Update user profile
   const updateProfile = async (updates) => {
     try {
-      setError(null);
-      
       if (!user) {
-        throw new Error('User not authenticated');
+        return { success: false, error: 'No user logged in' };
       }
-      
-      const result = await userService.updateUserProfile(user.id, updates);
-      
-      if (result.success) {
-        setUserProfile(result.data);
-        return { success: true, data: result.data };
-      } else {
-        setError(result.error);
-        return { success: false, error: result.error };
+
+      logger.log('Updating user profile with:', updates);
+
+      // Update auth metadata first (this always works)
+      const { error: authError } = await supabase.auth.updateUser({
+        data: updates
+      });
+
+      if (authError) {
+        logger.error('Error updating auth metadata:', authError);
+        return { success: false, error: 'Failed to update profile metadata' };
       }
+
+      // Try to update users table if it exists
+      try {
+        const { error: profileError } = await supabase
+          .from('users')
+          .update({
+            ...updates,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', user.id);
+
+        if (profileError) {
+          logger.warn('Could not update users table:', profileError.message);
+          
+          // If table doesn't exist or access denied, that's okay
+          if (profileError.code !== '42P01' && profileError.status !== 406) {
+            logger.error('Unexpected error updating users table:', profileError);
+          }
+        } else {
+          logger.log('Users table updated successfully');
+        }
+      } catch (tableError) {
+        logger.warn('Users table update failed:', tableError);
+        // Continue anyway - auth metadata was updated
+      }
+
+      // Reload profile to get latest data
+      await loadUserProfile(user.id);
+
+      return { success: true };
     } catch (error) {
-      logger.error('AuthContext: Update profile error:', error);
-      const errorMessage = error.message || 'Failed to update profile';
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
+      logger.error('Error updating profile:', error);
+      return { success: false, error: 'Failed to update profile' };
     }
   };
 
-  // Clear error
-  const clearError = () => {
-    setError(null);
-  };
-
-  // Get user progress
-  const getUserProgress = async () => {
+  const resetPassword = async (email) => {
     try {
-      if (!user) {
-        throw new Error('User not authenticated');
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
       }
-      
-      const result = await userService.getUserProgress(user.id);
-      return result;
+
+      return { success: true };
     } catch (error) {
-      logger.error('AuthContext: Get user progress error:', error);
-      return { success: false, error: error.message };
+      logger.error('Reset password error:', error);
+      return { success: false, error: 'Failed to send reset email' };
     }
-  };
-
-  // Check authentication status
-  const isAuthenticated = () => {
-    return user !== null;
-  };
-
-  // Check if user is admin
-  const isAdmin = () => {
-    return userProfile?.role === 'admin' || userProfile?.email === process.env.REACT_APP_ADMIN_EMAIL;
   };
 
   const value = {
-    // State
     user,
     userProfile,
     loading,
-    error,
-    
-    // Auth methods
-    sendVerificationCode,
-    verifyEmailCode,
     signUp,
     signIn,
     signOut,
     updateProfile,
-    
-    // Utility methods
-    clearError,
-    getUserProgress,
-    isAuthenticated,
-    isAdmin,
-    
-    // For debugging
-    initializeAuth
+    resetPassword,
+    isAdmin  // Add isAdmin to the context value
   };
 
   return (
@@ -268,5 +425,3 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
-
-export default AuthProvider;
