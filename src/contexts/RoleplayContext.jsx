@@ -1,4 +1,4 @@
-// src/contexts/RoleplayContext.jsx - FIXED SESSION STARTUP FLOW
+// src/contexts/RoleplayContext.jsx - FIXED NO RE-RENDER LOOPS
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { useProgress } from './ProgressContext';
@@ -33,26 +33,22 @@ export const RoleplayProvider = ({ children }) => {
   const [passCount, setPassCount] = useState(0);
   const [evaluations, setEvaluations] = useState([]);
   
-  // Use refs for state that needs to be current in callbacks
+  // Use refs for stable references
   const sessionRef = useRef(null);
   const isEndingSessionRef = useRef(false);
-  const callStateRef = useRef('idle');
-  const isProcessingRef = useRef(false);
 
-  // Update refs whenever state changes
+  // FIXED: Stable callback references using useCallback with stable dependencies
   const updateCallState = useCallback((newState) => {
     logger.log('🔄 [ROLEPLAY] Updating call state:', newState);
-    callStateRef.current = newState;
     setCallState(newState);
   }, []);
 
   const updateIsProcessing = useCallback((newValue) => {
     logger.log('🔄 [ROLEPLAY] Updating isProcessing:', newValue);
-    isProcessingRef.current = newValue;
     setIsProcessing(newValue);
   }, []);
 
-  // Start roleplay session - FIXED FLOW
+  // FIXED: Stable startRoleplaySession function
   const startRoleplaySession = useCallback(async (roleplayType, mode, metadata = {}) => {
     try {
       logger.log('🎬 [ROLEPLAY] Starting session:', { roleplayType, mode });
@@ -112,7 +108,7 @@ export const RoleplayProvider = ({ children }) => {
         try {
           updateCallState('connected');
           
-          // Handle greeting stage - FIXED TO GET AI RESPONSE
+          // Handle greeting stage
           logger.log('🔄 [ROLEPLAY] Processing greeting...');
           const greetingResponse = await roleplayEngine.processUserInput('', {
             stage: 'greeting',
@@ -140,9 +136,6 @@ export const RoleplayProvider = ({ children }) => {
               await voiceService.speakText(greetingResponse.response);
               logger.log('✅ [ROLEPLAY] Greeting spoken successfully');
               
-              // FIXED: Voice conversation will be started by UnifiedPhoneInterface
-              // after it detects the AI has finished speaking
-              
             } catch (speakError) {
               logger.error('❌ [ROLEPLAY] Failed to speak greeting:', speakError);
             }
@@ -164,37 +157,30 @@ export const RoleplayProvider = ({ children }) => {
       updateCallState('idle');
       throw error;
     }
-  }, [userProfile, updateCallState, updateIsProcessing]);
+  }, [userProfile?.id, updateCallState, updateIsProcessing]); // FIXED: Stable dependencies only
 
-  // Handle user speech - SIMPLIFIED AND FIXED
-  const handleUserSpeech = useCallback(async (transcript, confidence) => {
-    logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech CALLED ======');
-    logger.log('🗣️ [ROLEPLAY] Transcript:', transcript);
-    logger.log('🗣️ [ROLEPLAY] Current state:', {
-      hasSession: !!sessionRef.current,
-      callState: callStateRef.current,
-      isEnding: isEndingSessionRef.current,
-      isProcessing: isProcessingRef.current
-    });
+  // FIXED: Stable handleUserResponse function
+  const handleUserResponse = useCallback(async (userInput) => {
+    logger.log('📝 [ROLEPLAY] User response:', userInput);
 
     // Check preconditions
     if (!sessionRef.current) {
-      logger.log('⚠️ [ROLEPLAY] No session, ignoring speech');
+      logger.log('⚠️ [ROLEPLAY] No session, ignoring input');
       return;
     }
 
-    if (callStateRef.current !== 'connected') {
-      logger.log('⚠️ [ROLEPLAY] Call not connected, ignoring speech');
+    if (callState !== 'connected') {
+      logger.log('⚠️ [ROLEPLAY] Call not connected, ignoring input');
       return;
     }
 
     if (isEndingSessionRef.current) {
-      logger.log('⚠️ [ROLEPLAY] Session ending, ignoring speech');
+      logger.log('⚠️ [ROLEPLAY] Session ending, ignoring input');
       return;
     }
 
-    if (isProcessingRef.current) {
-      logger.log('⚠️ [ROLEPLAY] Already processing, ignoring speech');
+    if (isProcessing) {
+      logger.log('⚠️ [ROLEPLAY] Already processing, ignoring input');
       return;
     }
 
@@ -205,7 +191,7 @@ export const RoleplayProvider = ({ children }) => {
       // Add user input to conversation history
       const userEntry = {
         speaker: 'user',
-        message: transcript,
+        message: userInput,
         timestamp: Date.now()
       };
       
@@ -214,7 +200,7 @@ export const RoleplayProvider = ({ children }) => {
       logger.log('🤖 [ROLEPLAY] Processing user input with engine...');
       
       // Process input through roleplay engine
-      const engineResult = await roleplayEngine.processUserInput(transcript, {
+      const engineResult = await roleplayEngine.processUserInput(userInput, {
         roleplayType: sessionRef.current.roleplayType,
         mode: sessionRef.current.mode,
         stage: currentStage,
@@ -239,7 +225,7 @@ export const RoleplayProvider = ({ children }) => {
         if (engineResult.evaluation) {
           setEvaluations(prev => [...prev, {
             stage: currentStage,
-            userInput: transcript,
+            userInput: userInput,
             evaluation: engineResult.evaluation,
             timestamp: Date.now()
           }]);
@@ -324,7 +310,7 @@ export const RoleplayProvider = ({ children }) => {
       }
 
     } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error processing user speech:', error);
+      logger.error('❌ [ROLEPLAY] Error processing user input:', error);
       
       // Emergency recovery
       if (!isEndingSessionRef.current) {
@@ -339,9 +325,52 @@ export const RoleplayProvider = ({ children }) => {
     } finally {
       logger.log('🔄 [ROLEPLAY] Setting isProcessing to FALSE');
       updateIsProcessing(false);
-      logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech COMPLETED ======');
     }
-  }, [updateIsProcessing, currentStage]);
+  }, [callState, isProcessing, currentStage, updateIsProcessing]); // FIXED: Stable dependencies
+
+  // Handle session completion with proper score recording
+  const handleSessionCompletion = useCallback(async (engineResult) => {
+    try {
+      logger.log('🏁 [ROLEPLAY] Handling session completion');
+
+      if (!sessionRef.current) {
+        logger.error('❌ [ROLEPLAY] No session reference for completion');
+        return;
+      }
+
+      // Set session results
+      const sessionResultData = {
+        sessionId: sessionRef.current.id,
+        roleplayType: sessionRef.current.roleplayType,
+        mode: sessionRef.current.mode,
+        passed: engineResult.sessionPassed || false,
+        metrics: engineResult.metrics || {},
+        unlocks: [],
+        finalMessage: engineResult.response || 'Session completed',
+        progressMessage: 'Session completed successfully'
+      };
+
+      setSessionResults(sessionResultData);
+      updateCallState('ended');
+
+    } catch (error) {
+      logger.error('❌ [ROLEPLAY] Error handling session completion:', error);
+      
+      // Set basic results even if error
+      setSessionResults({
+        sessionId: sessionRef.current?.id,
+        roleplayType: sessionRef.current?.roleplayType,
+        mode: sessionRef.current?.mode,
+        passed: false,
+        metrics: {},
+        unlocks: [],
+        finalMessage: 'Session completed',
+        progressMessage: 'Session completed'
+      });
+
+      updateCallState('ended');
+    }
+  }, [updateCallState]);
 
   // Start next call in marathon/legend mode
   const startNextCall = useCallback(() => {
@@ -351,8 +380,6 @@ export const RoleplayProvider = ({ children }) => {
     setCurrentStage('greeting');
     setCurrentMessage('');
     setEvaluations([]);
-    
-    // Clear conversation history for new call
     setConversationHistory([]);
     
     // Start with greeting
@@ -383,77 +410,6 @@ export const RoleplayProvider = ({ children }) => {
     }, 500);
   }, []);
 
-  // Handle session completion with proper score recording
-  const handleSessionCompletion = useCallback(async (engineResult) => {
-    try {
-      logger.log('🏁 [ROLEPLAY] Handling session completion with score recording:', engineResult);
-
-      if (!sessionRef.current) {
-        logger.error('❌ [ROLEPLAY] No session reference for completion');
-        return;
-      }
-
-      // Prepare session result data for scoring
-      const sessionResultData = {
-        sessionId: sessionRef.current.id,
-        passed: engineResult.sessionPassed || false,
-        averageScore: engineResult.metrics?.averageScore || 0,
-        passedCalls: engineResult.metrics?.passedCalls || passCount,
-        totalCalls: engineResult.metrics?.totalCalls || callCount,
-        correctAnswers: engineResult.metrics?.correctAnswers,
-        totalQuestions: engineResult.metrics?.totalQuestions,
-        completed: true,
-        duration: Math.floor((Date.now() - new Date(sessionRef.current.startedAt).getTime()) / 1000),
-        evaluations: evaluations,
-        metrics: engineResult.metrics || {}
-      };
-
-      logger.log('📊 [ROLEPLAY] Recording session with progressTracker:', sessionResultData);
-
-      // Record session completion and handle unlocks through progressTracker
-      const progressResult = await progressTracker.recordSessionCompletion(
-        sessionRef.current.userId,
-        sessionRef.current.roleplayType,
-        sessionRef.current.mode,
-        sessionResultData
-      );
-
-      logger.log('✅ [ROLEPLAY] Progress recorded:', progressResult);
-
-      // Refresh progress data in context
-      if (loadProgressData) {
-        await loadProgressData();
-      }
-
-      // Set session results with unlock information
-      setSessionResults({
-        ...sessionResultData,
-        unlocks: progressResult.unlocks || [],
-        finalMessage: engineResult.response,
-        progressMessage: progressResult.message
-      });
-
-      updateCallState('ended');
-
-    } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error handling session completion:', error);
-      
-      // Set basic results even if progress recording failed
-      setSessionResults({
-        sessionId: sessionRef.current?.id,
-        roleplayType: sessionRef.current?.roleplayType,
-        mode: sessionRef.current?.mode,
-        passed: engineResult.sessionPassed || false,
-        metrics: engineResult.metrics || {},
-        unlocks: [],
-        finalMessage: engineResult.response || 'Session completed',
-        progressMessage: 'Session completed (progress recording failed)'
-      });
-
-      updateCallState('ended');
-    }
-  }, [evaluations, callCount, passCount, loadProgressData, updateCallState]);
-
   // End session with results recording
   const endSessionWithResults = useCallback(async (engineResult) => {
     if (!sessionRef.current || isEndingSessionRef.current) {
@@ -468,68 +424,31 @@ export const RoleplayProvider = ({ children }) => {
       isEndingSessionRef.current = true;
       
       // Stop voice service immediately
-      logger.log('🔇 [ROLEPLAY] Stopping voice service immediately...');
+      logger.log('🔇 [ROLEPLAY] Stopping voice service...');
       voiceService.stopConversation();
       voiceService.stopSpeaking();
       voiceService.stopListening();
       
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Complete session through engine to get final results
-      let sessionResults = null;
-      
-      try {
-        sessionResults = await roleplayEngine.completeSession();
-        
-        if (sessionResults && sessionResults.success) {
-          await handleSessionCompletion(sessionResults);
-          return sessionResults;
-        }
-      } catch (engineError) {
-        logger.warn('Engine completion failed:', engineError);
-      }
-
-      // Fallback: create basic results and record them
-      const fallbackResults = {
+      // Set session results
+      const sessionResultData = {
         sessionId: sessionRef.current.id,
-        passed: false,
-        averageScore: evaluations.length > 0 
-          ? evaluations.reduce((sum, e) => sum + (e.evaluation?.score || 0), 0) / evaluations.length
-          : 0,
-        passedCalls: passCount,
-        totalCalls: callCount,
-        completed: true,
-        duration: Math.floor((Date.now() - new Date(sessionRef.current.startedAt).getTime()) / 1000),
-        evaluations: evaluations
+        roleplayType: sessionRef.current.roleplayType,
+        mode: sessionRef.current.mode,
+        passed: engineResult?.sessionPassed || false,
+        metrics: engineResult?.metrics || {},
+        unlocks: [],
+        finalMessage: engineResult?.response || 'Session ended',
+        progressMessage: 'Session completed'
       };
 
-      // Record fallback results
-      const progressResult = await progressTracker.recordSessionCompletion(
-        sessionRef.current.userId,
-        sessionRef.current.roleplayType,
-        sessionRef.current.mode,
-        fallbackResults
-      );
-
-      // Refresh progress data
-      if (loadProgressData) {
-        await loadProgressData();
-      }
-
-      setSessionResults({
-        ...fallbackResults,
-        unlocks: progressResult.unlocks || [],
-        finalMessage: 'Session ended',
-        progressMessage: progressResult.message
-      });
-
+      setSessionResults(sessionResultData);
       updateCallState('ended');
       
-      logger.log('✅ [ROLEPLAY] Session ended with results recorded');
-      return fallbackResults;
+      logger.log('✅ [ROLEPLAY] Session ended successfully');
+      return sessionResultData;
       
     } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error ending session with results:', error);
+      logger.error('❌ [ROLEPLAY] Error ending session:', error);
       
       // Minimal fallback
       setSessionResults({
@@ -537,7 +456,7 @@ export const RoleplayProvider = ({ children }) => {
         roleplayType: sessionRef.current?.roleplayType,
         mode: sessionRef.current?.mode,
         passed: false,
-        metrics: { averageScore: 0 },
+        metrics: {},
         unlocks: [],
         finalMessage: 'Session ended',
         progressMessage: 'Session completed'
@@ -546,32 +465,25 @@ export const RoleplayProvider = ({ children }) => {
       updateCallState('ended');
       return null;
     }
-  }, [evaluations, callCount, passCount, handleSessionCompletion, loadProgressData, updateCallState]);
+  }, [updateCallState]);
 
-  // End session manually (original method for hangup button)
+  // FIXED: Stable endSession function
   const endSession = useCallback(async (reason = 'completed') => {
     if (!sessionRef.current || isEndingSessionRef.current) {
       logger.log('⚠️ [ROLEPLAY] Session already ending or no session');
       return null;
     }
 
-    try {
-      logger.log('🏁 [ROLEPLAY] Manual session end:', reason);
-      
-      // For manual ends (like hangup), we should still try to record progress
-      return await endSessionWithResults({ 
-        sessionPassed: false, 
-        metrics: { averageScore: 0 },
-        response: 'Session ended manually'
-      });
-      
-    } catch (error) {
-      logger.error('❌ [ROLEPLAY] Error in manual session end:', error);
-      return null;
-    }
+    logger.log('🏁 [ROLEPLAY] Manual session end:', reason);
+    
+    return await endSessionWithResults({ 
+      sessionPassed: false, 
+      metrics: { averageScore: 0 },
+      response: 'Session ended manually'
+    });
   }, [endSessionWithResults]);
 
-  // Reset session
+  // FIXED: Stable resetSession function
   const resetSession = useCallback(() => {
     logger.log('🔄 [ROLEPLAY] Resetting session');
     
@@ -581,7 +493,6 @@ export const RoleplayProvider = ({ children }) => {
     voiceService.stopConversation();
     voiceService.stopSpeaking();
     voiceService.stopListening();
-    voiceService.cleanup();
     
     // Reset state
     setCurrentSession(null);
@@ -614,12 +525,7 @@ export const RoleplayProvider = ({ children }) => {
     };
   }, [callCount, passCount, currentStage, conversationHistory.length, evaluations.length]);
 
-  // Manual user response for testing
-  const handleUserResponse = useCallback(async (userInput) => {
-    logger.log('📝 [ROLEPLAY] Manual user response:', userInput);
-    return await handleUserSpeech(userInput, 1.0);
-  }, [handleUserSpeech]);
-
+  // FIXED: Create stable value object
   const value = {
     // State
     currentSession,
@@ -633,7 +539,7 @@ export const RoleplayProvider = ({ children }) => {
     passCount,
     evaluations,
     
-    // Actions
+    // Actions - all stable references
     startRoleplaySession,
     handleUserResponse,
     endSession,

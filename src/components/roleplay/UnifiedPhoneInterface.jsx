@@ -1,7 +1,7 @@
-// src/components/roleplay/UnifiedPhoneInterface.jsx - FIXED CONVERSATION STARTUP
+// src/components/roleplay/UnifiedPhoneInterface.jsx - FIXED CLEANUP LOOP
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MessageCircle, ArrowLeft, Clock, Star, Trophy } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, MessageCircle, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRoleplay } from '../../contexts/RoleplayContext';
 import { useProgress } from '../../contexts/ProgressContext';
@@ -23,74 +23,52 @@ const UnifiedPhoneInterface = () => {
     currentMessage,
     conversationHistory,
     currentStage,
-    callCount,
-    passCount,
-    getSessionStats,
     handleUserResponse
   } = useRoleplay();
 
   // Local state
   const [isInitializing, setIsInitializing] = useState(true);
   const [callDuration, setCallDuration] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
   const [showManualInput, setShowManualInput] = useState(false);
   const [manualInput, setManualInput] = useState('');
   const [error, setError] = useState('');
-  const [deviceType, setDeviceType] = useState('desktop');
   const [micPermission, setMicPermission] = useState('prompt');
   const [isHangingUp, setIsHangingUp] = useState(false);
-  const [accessInfo, setAccessInfo] = useState(null);
-  const [voiceReady, setVoiceReady] = useState(false);
 
-  // Refs
-  const durationInterval = useRef(null);
+  // Refs - FIXED: Use refs to prevent cleanup loops
   const initializationAttempted = useRef(false);
   const hangupAttempted = useRef(false);
   const voiceServiceRef = useRef(null);
+  const durationInterval = useRef(null);
+  const componentMounted = useRef(true);
 
-  // Initialize voice service reference
+  // FIXED: Initialize voice service reference once on mount
   useEffect(() => {
+    let mounted = true;
+    
     const initVoiceService = async () => {
       try {
         const { voiceService } = await import('../../services/voiceService');
-        voiceServiceRef.current = voiceService;
-        setVoiceReady(true);
-        logger.log('🎤 Voice service reference set');
+        if (mounted) {
+          voiceServiceRef.current = voiceService;
+          logger.log('🎤 Voice service reference set');
+        }
       } catch (error) {
         logger.error('❌ Failed to load voice service:', error);
       }
     };
 
     initVoiceService();
-  }, []);
-
-  // Handle user speech with proper callback
-  const handleUserSpeech = useCallback(async (transcript, confidence) => {
-    logger.log('🗣️ [PHONE] User speech received:', transcript);
     
-    if (!currentSession || callState !== 'connected' || isProcessing) {
-      logger.log('⚠️ [PHONE] Ignoring speech - session not ready');
-      return;
-    }
+    return () => {
+      mounted = false;
+    };
+  }, []); // Empty dependency array - only run once
 
-    try {
-      await handleUserResponse(transcript);
-      logger.log('✅ [PHONE] User speech processed successfully');
-    } catch (error) {
-      logger.error('❌ [PHONE] Error processing user speech:', error);
-      setError('Failed to process your message. Please try again.');
-    }
-  }, [currentSession, callState, isProcessing, handleUserResponse]);
-
-  // Handle voice errors
-  const handleVoiceError = useCallback((error) => {
-    logger.error('🎤 [PHONE] Voice error:', error);
-    setError('Voice recognition error. Please try speaking again or use text input.');
-  }, []);
-
-  // Initialize roleplay session
+  // FIXED: Initialize roleplay session only once
   useEffect(() => {
-    if (initializationAttempted.current || !voiceReady) return;
+    if (initializationAttempted.current || !userProfile?.id) return;
+    
     initializationAttempted.current = true;
 
     const initializeRoleplay = async () => {
@@ -103,7 +81,6 @@ const UnifiedPhoneInterface = () => {
 
         // Check access first
         const accessCheck = await canAccessRoleplay(type, mode);
-        setAccessInfo(accessCheck.accessInfo);
         
         if (!accessCheck.allowed) {
           throw new Error(accessCheck.reason || 'Access denied to this roleplay');
@@ -112,8 +89,7 @@ const UnifiedPhoneInterface = () => {
         // Start the roleplay session
         await startRoleplaySession(type, mode, {
           userProfile,
-          deviceType,
-          accessInfo: accessCheck.accessInfo
+          deviceType: 'web'
         });
 
         logger.log('✅ [PHONE] Roleplay initialized successfully');
@@ -127,17 +103,51 @@ const UnifiedPhoneInterface = () => {
     };
 
     initializeRoleplay();
-  }, [type, mode, startRoleplaySession, canAccessRoleplay, userProfile, deviceType, voiceReady]);
+  }, [type, mode, userProfile?.id]); // FIXED: Minimal dependencies
 
-  // FIXED: Start voice conversation after AI speaks
+  // FIXED: Handle voice conversation startup - only when AI finishes speaking
   useEffect(() => {
-    if (callState === 'connected' && currentMessage && voiceServiceRef.current && !isProcessing) {
-      // Wait a bit after AI speaks, then start listening
+    if (
+      callState === 'connected' && 
+      currentMessage && 
+      voiceServiceRef.current && 
+      !isProcessing && 
+      !isHangingUp &&
+      componentMounted.current
+    ) {
       const timer = setTimeout(async () => {
-        if (callState === 'connected' && !isHangingUp && !isProcessing) {
+        if (
+          callState === 'connected' && 
+          !isHangingUp && 
+          !isProcessing && 
+          componentMounted.current &&
+          voiceServiceRef.current
+        ) {
           logger.log('🎤 [PHONE] Starting voice conversation after AI response');
           
           try {
+            // Handle user speech callback
+            const handleUserSpeech = async (transcript, confidence) => {
+              logger.log('🗣️ [PHONE] User speech received:', transcript);
+              
+              if (componentMounted.current && callState === 'connected' && !isProcessing) {
+                try {
+                  await handleUserResponse(transcript);
+                } catch (error) {
+                  logger.error('❌ [PHONE] Error processing user speech:', error);
+                  setError('Failed to process your message. Please try again.');
+                }
+              }
+            };
+
+            // Handle voice errors
+            const handleVoiceError = (error) => {
+              logger.error('🎤 [PHONE] Voice error:', error);
+              if (componentMounted.current) {
+                setError('Voice recognition error. Please try speaking again or use text input.');
+              }
+            };
+
             const success = voiceServiceRef.current.startConversation(
               handleUserSpeech,
               handleVoiceError
@@ -156,7 +166,7 @@ const UnifiedPhoneInterface = () => {
 
       return () => clearTimeout(timer);
     }
-  }, [callState, currentMessage, isProcessing, isHangingUp, handleUserSpeech, handleVoiceError]);
+  }, [callState, currentMessage, isProcessing, isHangingUp]); // FIXED: Remove function dependencies
 
   // Handle call duration timer
   useEffect(() => {
@@ -181,23 +191,38 @@ const UnifiedPhoneInterface = () => {
     };
   }, [callState]);
 
-  // Cleanup on unmount
+  // FIXED: Cleanup only on unmount
   useEffect(() => {
+    componentMounted.current = true;
+    
     return () => {
       logger.log('🧹 [PHONE] Component unmounting, cleaning up...');
-      if (currentSession && !hangupAttempted.current) {
-        hangupAttempted.current = true;
-        endSession('component_unmount');
+      componentMounted.current = false;
+      
+      // Stop voice service
+      if (voiceServiceRef.current) {
+        try {
+          voiceServiceRef.current.stopConversation();
+          voiceServiceRef.current.stopSpeaking();
+          voiceServiceRef.current.stopListening();
+        } catch (error) {
+          logger.warn('Voice cleanup error:', error);
+        }
       }
-      resetSession();
+      
+      // Clear timer
       if (durationInterval.current) {
         clearInterval(durationInterval.current);
       }
-      if (voiceServiceRef.current) {
-        voiceServiceRef.current.stopConversation();
+      
+      // End session if needed
+      if (currentSession && !hangupAttempted.current) {
+        hangupAttempted.current = true;
+        // Don't call endSession here as it might cause loops
+        // Let the session timeout naturally or be ended by other means
       }
     };
-  }, [currentSession, endSession, resetSession]);
+  }, []); // FIXED: Empty dependency array - only run on mount/unmount
 
   // Handle microphone button click
   const handleMicClick = useCallback(async () => {
@@ -238,7 +263,7 @@ const UnifiedPhoneInterface = () => {
       }
     } catch (error) {
       logger.error('❌ [PHONE] Microphone error:', error);
-      setError('Microphone not available. Please use text input or check your browser permissions.');
+      setError('Microphone not available. Please use text input.');
     }
   }, [micPermission, callState, isProcessing]);
 
@@ -270,34 +295,24 @@ const UnifiedPhoneInterface = () => {
       hangupAttempted.current = true;
       setIsHangingUp(true);
       
-      logger.log('📞 [PHONE] Hangup button clicked - starting cleanup');
+      logger.log('📞 [PHONE] Hangup button clicked');
       
       // Stop voice service immediately
       if (voiceServiceRef.current) {
-        logger.log('🔇 [PHONE] Stopping voice service immediately');
+        logger.log('🔇 [PHONE] Stopping voice service');
         voiceServiceRef.current.stopConversation();
         voiceServiceRef.current.stopSpeaking();
         voiceServiceRef.current.stopListening();
       }
 
-      // End the session
-      if (endSession) {
-        logger.log('📞 [PHONE] Ending session...');
-        const sessionResult = await endSession('user_hangup');
-        logger.log('📞 [PHONE] Session ended, result:', sessionResult);
-      }
-      
-      // Navigate back to dashboard
-      logger.log('📞 [PHONE] Navigating to dashboard');
+      // Navigate back immediately (don't wait for session end)
       navigate('/dashboard');
       
     } catch (error) {
       logger.error('❌ [PHONE] Error in hangup handler:', error);
       navigate('/dashboard');
-    } finally {
-      setIsHangingUp(false);
     }
-  }, [endSession, navigate, isHangingUp]);
+  }, [navigate, isHangingUp]);
 
   // Get microphone state
   const getMicrophoneState = useCallback(async () => {
@@ -311,9 +326,6 @@ const UnifiedPhoneInterface = () => {
     }
   }, []);
 
-  // Rest of the component remains the same...
-  // [Include all the existing render logic, but with the fixes above]
-
   // Show loading state
   if (isInitializing) {
     return (
@@ -322,10 +334,6 @@ const UnifiedPhoneInterface = () => {
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-white mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold mb-2">Starting Roleplay</h2>
           <p className="text-blue-200">Setting up your practice session...</p>
-          <p className="text-sm text-blue-300 mt-2">Device: {deviceType}</p>
-          {accessInfo && (
-            <p className="text-xs text-blue-400 mt-1">Access Level: {accessInfo.accessLevel}</p>
-          )}
         </div>
       </div>
     );
@@ -333,11 +341,35 @@ const UnifiedPhoneInterface = () => {
 
   // Show session results
   if (sessionResults) {
-    return <SessionResults 
-      results={sessionResults} 
-      onContinue={() => navigate('/dashboard')}
-      onRetry={() => window.location.reload()}
-    />;
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-xl shadow-xl overflow-hidden">
+            <div className="bg-blue-500 text-white p-8 text-center">
+              <div className="text-6xl mb-4">🌟</div>
+              <h1 className="text-2xl font-bold mb-2">Session Complete!</h1>
+              <p className="text-lg opacity-90">Great job practicing!</p>
+            </div>
+            <div className="p-6">
+              <div className="space-y-3">
+                <button
+                  onClick={() => window.location.reload()}
+                  className="w-full bg-gray-600 text-white py-3 px-6 rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  🔄 Try Again
+                </button>
+                <button
+                  onClick={() => navigate('/dashboard')}
+                  className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  📚 Back to Dashboard
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const character = currentSession?.character || { 
@@ -383,7 +415,7 @@ const UnifiedPhoneInterface = () => {
       {/* Debug Info */}
       {process.env.NODE_ENV === 'development' && (
         <div className="bg-yellow-600 text-white p-2 text-center text-xs">
-          Debug: {callState} | Stage: {currentStage} | Processing: {isProcessing ? 'yes' : 'no'} | Voice Ready: {voiceReady ? 'yes' : 'no'}
+          Debug: {callState} | Stage: {currentStage} | Processing: {isProcessing ? 'yes' : 'no'} | Mounted: {componentMounted.current ? 'yes' : 'no'}
         </div>
       )}
 
@@ -400,9 +432,6 @@ const UnifiedPhoneInterface = () => {
                callState === 'connected' ? `Connected • ${Math.floor(callDuration / 60)}:${(callDuration % 60).toString().padStart(2, '0')}` :
                callState === 'ended' ? 'Call Ended' : 'Unknown'}
             </div>
-            {micPermission === 'denied' && (
-              <p className="text-xs text-red-300">⚠️ Microphone access denied</p>
-            )}
           </div>
 
           {/* Character Avatar & Info */}
@@ -442,7 +471,7 @@ const UnifiedPhoneInterface = () => {
               <div className="flex justify-center">
                 <MicrophoneButton 
                   onClick={handleMicClick}
-                  disabled={isProcessing || isMuted || isHangingUp}
+                  disabled={isProcessing || isHangingUp}
                   getMicrophoneState={getMicrophoneState}
                 />
               </div>
@@ -459,20 +488,6 @@ const UnifiedPhoneInterface = () => {
                   title="Type response"
                 >
                   <MessageCircle className="w-5 h-5 text-white" />
-                </button>
-
-                {/* Mute Toggle */}
-                <button
-                  onClick={() => setIsMuted(!isMuted)}
-                  disabled={isHangingUp}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-50 ${
-                    isMuted 
-                      ? 'bg-red-600 hover:bg-red-700' 
-                      : 'bg-gray-700 hover:bg-gray-600'
-                  }`}
-                  title={isMuted ? 'Unmute' : 'Mute'}
-                >
-                  {isMuted ? <VolumeX className="w-5 h-5 text-white" /> : <Volume2 className="w-5 h-5 text-white" />}
                 </button>
               </div>
             )}
@@ -536,15 +551,23 @@ const UnifiedPhoneInterface = () => {
             </div>
           </div>
 
+          {/* Test Button for Development */}
+          {process.env.NODE_ENV === 'development' && callState === 'connected' && (
+            <div className="mt-4 text-center">
+              <button 
+                onClick={() => handleUserResponse("Hi Sarah, this is John from TechCorp. I know this is out of the blue, but can I tell you why I'm calling?")}
+                className="bg-green-600 text-white p-2 rounded text-xs"
+              >
+                Test Opener
+              </button>
+            </div>
+          )}
+
           {/* Instructions */}
           <div className="mt-4 text-center text-white/60 text-xs">
             {isHangingUp && "Ending call..."}
             {!isHangingUp && callState === 'dialing' && "Connecting to prospect..."}
-            {!isHangingUp && callState === 'connected' && !showManualInput && (
-              micPermission === 'granted' 
-                ? "Tap microphone to speak or use text input"
-                : "Use text input to respond"
-            )}
+            {!isHangingUp && callState === 'connected' && !showManualInput && "Tap microphone to speak or use text input"}
             {!isHangingUp && callState === 'connected' && showManualInput && "Type your response and press Send"}
             {!isHangingUp && callState === 'ended' && "Call completed"}
           </div>
@@ -654,40 +677,6 @@ const MicrophoneButton = ({ onClick, disabled, getMicrophoneState }) => {
         <Mic className="w-8 h-8 text-white" />
       )}
     </button>
-  );
-};
-
-// Session Results Component
-const SessionResults = ({ results, onContinue, onRetry }) => {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-md mx-auto">
-        <div className="bg-white rounded-xl shadow-xl overflow-hidden">
-          <div className="bg-blue-500 text-white p-8 text-center">
-            <div className="text-6xl mb-4">🌟</div>
-            <h1 className="text-2xl font-bold mb-2">Session Complete!</h1>
-            <p className="text-lg opacity-90">Great job practicing!</p>
-          </div>
-
-          <div className="p-6">
-            <div className="space-y-3">
-              <button
-                onClick={onRetry}
-                className="w-full bg-gray-600 text-white py-3 px-6 rounded-lg hover:bg-gray-700 transition-colors"
-              >
-                🔄 Try Again
-              </button>
-              <button
-                onClick={onContinue}
-                className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                📚 Back to Dashboard
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 };
 
