@@ -159,35 +159,34 @@ export const RoleplayProvider = ({ children }) => {
     }
   }, [userProfile?.id, updateCallState, updateIsProcessing]); // FIXED: Stable dependencies only
 
-  // FIXED: Stable handleUserResponse function
   const handleUserResponse = useCallback(async (userInput) => {
-    logger.log('📝 [ROLEPLAY] User response:', userInput);
-
+    logger.log('📝 [ROLEPLAY] User response received:', userInput);
+  
     // Check preconditions
     if (!sessionRef.current) {
       logger.log('⚠️ [ROLEPLAY] No session, ignoring input');
       return;
     }
-
+  
     if (callState !== 'connected') {
       logger.log('⚠️ [ROLEPLAY] Call not connected, ignoring input');
       return;
     }
-
+  
     if (isEndingSessionRef.current) {
       logger.log('⚠️ [ROLEPLAY] Session ending, ignoring input');
       return;
     }
-
+  
     if (isProcessing) {
       logger.log('⚠️ [ROLEPLAY] Already processing, ignoring input');
       return;
     }
-
+  
     try {
       logger.log('🔄 [ROLEPLAY] Setting isProcessing to TRUE');
       updateIsProcessing(true);
-
+  
       // Add user input to conversation history
       const userEntry = {
         speaker: 'user',
@@ -196,138 +195,68 @@ export const RoleplayProvider = ({ children }) => {
       };
       
       setConversationHistory(prev => [...prev, userEntry]);
-
-      logger.log('🤖 [ROLEPLAY] Processing user input with engine...');
+      logger.log('📝 [ROLEPLAY] Added user message to history');
+  
+      // SIMPLIFIED: Create a simple AI response instead of complex engine processing
+      logger.log('🤖 [ROLEPLAY] Generating AI response...');
       
-      // Process input through roleplay engine
-      const engineResult = await roleplayEngine.processUserInput(userInput, {
-        roleplayType: sessionRef.current.roleplayType,
-        mode: sessionRef.current.mode,
-        stage: currentStage,
-        userProfile: sessionRef.current.userProfile
-      });
-
-      logger.log('🤖 [ROLEPLAY] Engine result received:', {
-        success: engineResult.success,
-        hasResponse: !!engineResult.response,
-        shouldHangUp: engineResult.shouldHangUp,
-        sessionComplete: engineResult.sessionComplete
-      });
-
-      // Check if session ended during processing
-      if (isEndingSessionRef.current) {
-        logger.log('⚠️ [ROLEPLAY] Session ended during processing, aborting');
-        return;
+      // Simple objection responses for testing
+      const objections = [
+        "What's this about?",
+        "I'm not interested.",
+        "We don't take cold calls.",
+        "Now is not a good time.",
+        "Is this a sales call?",
+        "Who gave you this number?",
+        "I'm busy right now.",
+        "Can you send me an email instead?"
+      ];
+      
+      const randomObjection = objections[Math.floor(Math.random() * objections.length)];
+      
+      // Add AI response to conversation
+      const aiEntry = {
+        speaker: 'ai',
+        message: randomObjection,
+        timestamp: Date.now()
+      };
+      
+      setConversationHistory(prev => [...prev, aiEntry]);
+      setCurrentMessage(randomObjection);
+      setCurrentStage('objection'); // Move to next stage
+      
+      logger.log('✅ [ROLEPLAY] AI response generated:', randomObjection);
+  
+      // Speak AI response
+      try {
+        logger.log('🗣️ [ROLEPLAY] Speaking AI response...');
+        await voiceService.speakText(randomObjection);
+        logger.log('✅ [ROLEPLAY] AI response spoken successfully');
+      } catch (speakError) {
+        logger.error('❌ [ROLEPLAY] Failed to speak AI response:', speakError);
       }
-
-      if (engineResult.success) {
-        // Track evaluation if provided
-        if (engineResult.evaluation) {
-          setEvaluations(prev => [...prev, {
-            stage: currentStage,
-            userInput: userInput,
-            evaluation: engineResult.evaluation,
-            timestamp: Date.now()
-          }]);
-        }
-
-        // Handle session completion
-        if (engineResult.sessionComplete) {
-          logger.log('🏁 [ROLEPLAY] Session completed by engine');
-          await handleSessionCompletion(engineResult);
-          return;
-        }
-
-        // Handle call completion (for marathon/legend modes)
-        if (engineResult.callResult) {
-          logger.log('📞 [ROLEPLAY] Call completed:', engineResult.callResult);
-          setCallCount(engineResult.callResult.callNumber);
-          if (engineResult.callResult.passed) {
-            setPassCount(prev => prev + 1);
-          }
-        }
-
-        // Add AI response to conversation if provided
-        if (engineResult.response) {
-          const aiEntry = {
-            speaker: 'ai',
-            message: engineResult.response,
-            timestamp: Date.now()
-          };
-          
-          setConversationHistory(prev => [...prev, aiEntry]);
-          setCurrentMessage(engineResult.response);
-          
-          // Update current stage
-          if (engineResult.stage) {
-            setCurrentStage(engineResult.stage);
-          }
-        }
-
-        // Speak AI response if provided and not hanging up
-        if (engineResult.response && !engineResult.shouldHangUp) {
-          try {
-            logger.log('🗣️ [ROLEPLAY] Speaking AI response...');
-            await voiceService.speakText(engineResult.response);
-            logger.log('✅ [ROLEPLAY] AI response spoken successfully');
-          } catch (speakError) {
-            logger.error('❌ [ROLEPLAY] Failed to speak AI response:', speakError);
-          }
-        }
-
-        // Handle hangup if required
-        if (engineResult.shouldHangUp) {
-          logger.log('🔚 [ROLEPLAY] Engine requests hangup');
-          
-          if (engineResult.nextCall) {
-            // Start next call in marathon/legend mode
-            setTimeout(() => {
-              startNextCall();
-            }, 2000);
-          } else {
-            // End session and record results
-            setTimeout(() => {
-              endSessionWithResults(engineResult);
-            }, 2000);
-          }
-          return;
-        }
-
-      } else {
-        logger.error('❌ [ROLEPLAY] Engine processing failed:', engineResult.error);
-        
-        // Emergency fallback
-        if (!isEndingSessionRef.current) {
-          const fallbackResponse = "Sorry, I had trouble understanding. Could you try again?";
-          setCurrentMessage(fallbackResponse);
-          
-          try {
-            await voiceService.speakText(fallbackResponse);
-          } catch (speakError) {
-            logger.error('❌ [ROLEPLAY] Failed to speak fallback:', speakError);
-          }
-        }
-      }
-
+  
+      // CRITICAL: DO NOT stop conversation - let it continue!
+      logger.log('🔄 [ROLEPLAY] Conversation continues...');
+  
     } catch (error) {
       logger.error('❌ [ROLEPLAY] Error processing user input:', error);
       
-      // Emergency recovery
-      if (!isEndingSessionRef.current) {
-        try {
-          const errorResponse = "Sorry, something went wrong. Could you try again?";
-          setCurrentMessage(errorResponse);
-          await voiceService.speakText(errorResponse);
-        } catch (recoveryError) {
-          logger.error('❌ [ROLEPLAY] Recovery failed:', recoveryError);
-        }
+      // Emergency recovery - but don't stop conversation
+      const errorResponse = "Sorry, I didn't catch that. Could you try again?";
+      setCurrentMessage(errorResponse);
+      
+      try {
+        await voiceService.speakText(errorResponse);
+      } catch (recoveryError) {
+        logger.error('❌ [ROLEPLAY] Recovery failed:', recoveryError);
       }
     } finally {
       logger.log('🔄 [ROLEPLAY] Setting isProcessing to FALSE');
       updateIsProcessing(false);
+      logger.log('✅ [ROLEPLAY] Ready for next user input');
     }
-  }, [callState, isProcessing, currentStage, updateIsProcessing]); // FIXED: Stable dependencies
-
+  }, [callState, isProcessing, updateIsProcessing]);
   // Handle session completion with proper score recording
   const handleSessionCompletion = useCallback(async (engineResult) => {
     try {

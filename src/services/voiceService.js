@@ -161,7 +161,7 @@ class VoiceService {
           isFinal,
           length: transcript.length 
         });
-
+    
         // FIXED: Process final results with proper state management
         if (isFinal && transcript.length > 2 && !this.isProcessingResult) {
           this.isProcessingResult = true;
@@ -170,22 +170,18 @@ class VoiceService {
           
           console.log('🔄 Processing final result:', transcript);
           
-          // Stop listening to prevent more input during processing
-          this.stopListening();
-          
           if (this.onUserSpeechCallback) {
             try {
-              // Give callback time to process
+              // Call the callback immediately
+              this.onUserSpeechCallback(transcript, confidence);
+              console.log('✅ User speech callback completed');
+              
+              // FIXED: Don't stop conversation - mark as ready for next input
               setTimeout(() => {
-                this.onUserSpeechCallback(transcript, confidence);
-                console.log('✅ User speech callback completed');
-                
-                // Mark processing as complete
-                setTimeout(() => {
-                  this.isProcessingResult = false;
-                  this.shouldRestart = true; // Allow restart after AI responds
-                }, 1000);
-              }, 100);
+                this.isProcessingResult = false;
+                this.shouldRestart = true; // Allow restart after AI responds
+                console.log('🔄 Ready for next user input');
+              }, 2000); // Wait 2 seconds for AI to respond
               
             } catch (callbackError) {
               console.error('❌ Error in user speech callback:', callbackError);
@@ -204,7 +200,88 @@ class VoiceService {
         this.shouldRestart = true;
       }
     }
-
+    
+    // ALSO: Modify the speakText method to restart listening after AI speaks
+    async speakText(text) {
+      if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        console.warn('⚠️ Invalid text for speech:', text);
+        return false;
+      }
+    
+      if (this.isSpeaking) {
+        console.log('🔇 Stopping current speech to speak new text');
+        this.stopSpeaking();
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    
+      return new Promise((resolve, reject) => {
+        try {
+          console.log('🗣️ Speaking:', text.substring(0, 100) + '...');
+          
+          this.isSpeaking = true;
+          this.shouldRestart = false; // Don't restart while speaking
+          
+          if (this.isListening) {
+            this.stopListening();
+          }
+    
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.rate = this.voiceSettings.rate;
+          utterance.pitch = this.voiceSettings.pitch;
+          utterance.volume = this.voiceSettings.volume;
+          utterance.lang = this.voiceSettings.lang;
+    
+          const voices = speechSynthesis.getVoices();
+          const preferredVoice = voices.find(voice => 
+            voice.lang.startsWith('en') && voice.name.includes('Google')
+          ) || voices.find(voice => voice.lang.startsWith('en')) || voices[0];
+          
+          if (preferredVoice) {
+            utterance.voice = preferredVoice;
+          }
+    
+          utterance.onstart = () => {
+            console.log('🗣️ Speech started');
+          };
+    
+          utterance.onend = () => {
+            console.log('✅ Speech completed');
+            this.isSpeaking = false;
+            this.currentUtterance = null;
+            
+            // FIXED: Restart listening automatically after AI speaks
+            if (this.conversationActive && !this.isProcessingResult) {
+              this.shouldRestart = true;
+              setTimeout(() => {
+                if (this.conversationActive && !this.isSpeaking && !this.isProcessingResult) {
+                  console.log('🔄 Restarting listening after speech');
+                  this.startListening();
+                }
+              }, 1000); // Wait 1 second after AI finishes speaking
+            }
+            
+            resolve(true);
+          };
+    
+          utterance.onerror = (event) => {
+            console.error('❌ Speech error:', event.error);
+            this.isSpeaking = false;
+            this.currentUtterance = null;
+            this.shouldRestart = true;
+            reject(new Error(`Speech synthesis error: ${event.error}`));
+          };
+    
+          this.currentUtterance = utterance;
+          speechSynthesis.speak(utterance);
+    
+        } catch (error) {
+          console.error('❌ Error in speakText:', error);
+          this.isSpeaking = false;
+          this.shouldRestart = true;
+          reject(error);
+        }
+      });
+    }
     startSilenceTimer() {
       this.clearSilenceTimer();
       
