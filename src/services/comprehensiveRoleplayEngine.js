@@ -1,4 +1,4 @@
-// src/services/comprehensiveRoleplayEngine.js - FIXED FOR DATABASE ISSUES
+// src/services/comprehensiveRoleplayEngine.js - EXACT CLIENT SPECIFICATIONS
 import { supabase } from '../config/supabase';
 import { openAIService } from './openaiService';
 import logger from '../utils/logger';
@@ -10,15 +10,6 @@ class ComprehensiveRoleplayEngine {
     this.moduleConfigs = this.initializeModuleConfigs();
     this.objectionLists = this.initializeObjectionLists();
     this.rubrics = this.initializeRubrics();
-    
-    // Add fallback data for when database is unavailable
-    this.fallbackUserData = {
-      access_level: 'trial',
-      first_name: 'User',
-      prospect_job_title: 'CEO',
-      prospect_industry: 'Technology',
-      custom_behavior_notes: ''
-    };
   }
 
   // Initialize all module configurations per client specs
@@ -53,9 +44,9 @@ class ComprehensiveRoleplayEngine {
         type: 'endurance',
         totalCalls: 20,
         callDistribution: {
-          noAnswer: 0.55,
-          immediateHangup: 0.125,
-          fullCall: 0.275
+          noAnswer: 0.55, // 50-60%
+          immediateHangup: 0.125, // 10-15%
+          fullCall: 0.275 // 25-30%
         }
       }
     };
@@ -221,23 +212,17 @@ class ComprehensiveRoleplayEngine {
     };
   }
 
-  // FIXED: Initialize session with ROBUST error handling and fallbacks
+  // Initialize session with exact client specifications
   async initializeSession(userId, roleplayType, mode, userProfile) {
     try {
       logger.log('🚀 [COMPREHENSIVE] Initializing session:', { userId, roleplayType, mode });
 
-      // FIXED: Get user data with robust fallback system
-      const userData = await this.getUserDataSafely(userId, userProfile);
+      // Get user data
+      const userData = await this.getUserData(userId, userProfile);
       
-      // FIXED: Allow opener_practice for ALL users regardless of database issues
-      if (!this.validateAccessSafely(userData, roleplayType, mode)) {
-        // Only block if it's NOT the first module
-        if (roleplayType !== 'opener_practice') {
-          throw new Error(`Access denied for ${roleplayType}. Complete previous modules first.`);
-        }
-        
-        // For opener_practice, always allow access
-        logger.log('🔓 [COMPREHENSIVE] Allowing opener_practice access (first module)');
+      // Validate access
+      if (!await this.validateAccess(userData, roleplayType, mode)) {
+        throw new Error('Access denied for this roleplay');
       }
 
       // Get module configuration
@@ -284,261 +269,7 @@ class ComprehensiveRoleplayEngine {
     }
   }
 
-  // FIXED: Robust user data retrieval with comprehensive fallbacks
-  async getUserDataSafely(userId, userProfile) {
-    try {
-      // First, try the database with timeout
-      logger.log('📊 [COMPREHENSIVE] Attempting database lookup...');
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Database timeout')), 3000)
-      );
-      
-      const databasePromise = supabase
-        .from('users')
-        .select('access_level, first_name, prospect_job_title, prospect_industry, custom_behavior_notes, is_admin')
-        .eq('id', userId)
-        .single();
-
-      const { data, error } = await Promise.race([databasePromise, timeoutPromise]);
-
-      if (!error && data) {
-        logger.log('✅ [COMPREHENSIVE] Database data retrieved successfully');
-        return {
-          access_level: data.access_level || 'trial',
-          first_name: data.first_name || 'User',
-          prospect_job_title: data.prospect_job_title || 'CEO',
-          prospect_industry: data.prospect_industry || 'Technology',
-          custom_behavior_notes: data.custom_behavior_notes || '',
-          is_admin: data.is_admin || false
-        };
-      }
-    } catch (dbError) {
-      logger.warn('⚠️ [COMPREHENSIVE] Database lookup failed:', dbError.message);
-    }
-
-    // Fallback to userProfile if database fails
-    if (userProfile) {
-      logger.log('🔄 [COMPREHENSIVE] Using userProfile fallback');
-      return {
-        access_level: userProfile.access_level || 'trial',
-        first_name: userProfile.first_name || userProfile.firstName || 'User',
-        prospect_job_title: userProfile.prospect_job_title || userProfile.prospectJobTitle || 'CEO',
-        prospect_industry: userProfile.prospect_industry || userProfile.prospectIndustry || 'Technology',
-        custom_behavior_notes: userProfile.custom_behavior_notes || userProfile.customBehaviorNotes || '',
-        is_admin: userProfile.is_admin || userProfile.isAdmin || false
-      };
-    }
-
-    // Final fallback to default data
-    logger.log('🆘 [COMPREHENSIVE] Using default fallback data');
-    return {
-      ...this.fallbackUserData,
-      userId // Ensure we have userId
-    };
-  }
-
-  // FIXED: Safe access validation that always allows first module
-  validateAccessSafely(userData, roleplayType, mode) {
-    try {
-      // ALWAYS allow opener_practice (first module)
-      if (roleplayType === 'opener_practice') {
-        logger.log('✅ [COMPREHENSIVE] Access granted: First module always available');
-        return true;
-      }
-
-      // Admin and unlimited users get everything
-      if (userData.is_admin || userData.access_level === 'unlimited') {
-        logger.log('✅ [COMPREHENSIVE] Access granted: Admin/Unlimited user');
-        return true;
-      }
-
-      // For other modules, they need to unlock through progression
-      // But don't block if database is having issues - let them try
-      logger.log('⚠️ [COMPREHENSIVE] Limited access validation (database issues may affect this)');
-      return true; // Allow for now to prevent blocking due to database issues
-      
-    } catch (error) {
-      logger.warn('⚠️ [COMPREHENSIVE] Access validation error:', error);
-      // If validation fails, allow opener_practice only
-      return roleplayType === 'opener_practice';
-    }
-  }
-
-  // FIXED: More robust session completion with database error handling
-  async completeSession(sessionPassed, metrics) {
-    try {
-      if (!this.currentSession) {
-        return { success: false, error: 'No active session' };
-      }
-
-      logger.log('🏁 [COMPREHENSIVE] Completing session:', { 
-        sessionPassed, 
-        roleplayType: this.currentSession.roleplayType,
-        mode: this.currentSession.mode 
-      });
-
-      // Try to record session in database, but don't fail if it doesn't work
-      let sessionResult = null;
-      try {
-        sessionResult = await this.recordSessionInDatabase(sessionPassed, metrics);
-      } catch (dbError) {
-        logger.warn('⚠️ [COMPREHENSIVE] Database recording failed:', dbError.message);
-        // Continue without database recording
-      }
-      
-      // Handle unlocks if session passed (but don't fail if database is down)
-      let unlocks = [];
-      if (sessionPassed) {
-        try {
-          unlocks = await this.handleUnlocks();
-        } catch (unlockError) {
-          logger.warn('⚠️ [COMPREHENSIVE] Unlock handling failed:', unlockError.message);
-          // Continue without unlocks
-        }
-      }
-
-      // Generate coaching feedback
-      const coaching = this.generateCoaching();
-
-      // Clean up session
-      const completedSession = this.currentSession;
-      this.currentSession = null;
-      this.sessionState = null;
-      openAIService.resetConversation();
-
-      return {
-        success: true,
-        sessionPassed,
-        metrics: metrics || this.calculateSessionMetrics(),
-        unlocks,
-        coaching,
-        sessionId: completedSession.id,
-        sessionComplete: true
-      };
-
-    } catch (error) {
-      logger.error('❌ [COMPREHENSIVE] Error completing session:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  // FIXED: Safe database recording with better error handling
-  async recordSessionInDatabase(passed, metrics) {
-    try {
-      const sessionData = {
-        user_id: this.currentSession.userId,
-        roleplay_type: this.currentSession.roleplayType,
-        mode: this.currentSession.mode,
-        passed: passed,
-        score: metrics?.averageScore || 0,
-        session_data: {
-          metrics,
-          evaluations: this.sessionState?.evaluations || [],
-          callResults: this.sessionState?.callResults || []
-        },
-        created_at: new Date().toISOString()
-      };
-
-      // Use a timeout for database operations
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Database timeout')), 5000)
-      );
-
-      const insertPromise = supabase
-        .from('session_logs')
-        .insert(sessionData)
-        .select()
-        .single();
-
-      const { data, error } = await Promise.race([insertPromise, timeoutPromise]);
-
-      if (error) {
-        logger.error('Database insert failed:', error);
-        return null;
-      }
-
-      // Try to update user progress
-      try {
-        await this.updateUserProgressSafely(passed, metrics);
-      } catch (progressError) {
-        logger.warn('Progress update failed:', progressError);
-        // Continue anyway
-      }
-
-      return data;
-    } catch (error) {
-      logger.error('Error recording session:', error);
-      return null;
-    }
-  }
-
-  // FIXED: Safe progress update with timeout
-  async updateUserProgressSafely(passed, metrics) {
-    try {
-      const { roleplayType, mode } = this.currentSession;
-      
-      // Get current progress with timeout
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Progress query timeout')), 3000)
-      );
-
-      const progressPromise = supabase
-        .from('user_progress')
-        .select('*')
-        .eq('user_id', this.currentSession.userId)
-        .eq('roleplay_type', roleplayType)
-        .single();
-
-      let currentProgress = null;
-      try {
-        const { data } = await Promise.race([progressPromise, timeoutPromise]);
-        currentProgress = data;
-      } catch (queryError) {
-        logger.warn('Progress query failed:', queryError);
-        // Use default values
-      }
-
-      const progressData = {
-        user_id: this.currentSession.userId,
-        roleplay_type: roleplayType,
-        total_attempts: (currentProgress?.total_attempts || 0) + 1,
-        total_passes: (currentProgress?.total_passes || 0) + (passed ? 1 : 0),
-        marathon_passes: mode === 'marathon' && passed 
-          ? (currentProgress?.marathon_passes || 0) + 1 
-          : (currentProgress?.marathon_passes || 0),
-        legend_completed: mode === 'legend' && passed
-          ? true
-          : (currentProgress?.legend_completed || false),
-        legend_attempt_used: mode === 'legend' 
-          ? true 
-          : (currentProgress?.legend_attempt_used || false),
-        best_score: Math.max(
-          currentProgress?.best_score || 0, 
-          metrics?.averageScore || 0
-        ),
-        updated_at: new Date().toISOString()
-      };
-
-      // Update with timeout
-      const updatePromise = supabase
-        .from('user_progress')
-        .upsert(progressData, {
-          onConflict: 'user_id,roleplay_type'
-        });
-
-      await Promise.race([updatePromise, timeoutPromise]);
-      logger.log('✅ Progress updated successfully');
-    } catch (error) {
-      logger.error('❌ Error updating progress:', error);
-      throw error;
-    }
-  }
-
-  // Keep all other methods the same...
+  // Initialize quickfire state for warmup challenge
   initializeQuickfireState() {
     // Shuffle prompt IDs 1-54, take first 25
     const allPromptIds = Array.from({ length: 54 }, (_, i) => i + 1);
@@ -557,6 +288,7 @@ class ComprehensiveRoleplayEngine {
     };
   }
 
+  // Initialize power hour state
   initializePowerHourState() {
     return {
       type: 'power_hour',
@@ -570,6 +302,7 @@ class ComprehensiveRoleplayEngine {
     };
   }
 
+  // Initialize conversation state for regular roleplays
   initializeConversationState(moduleConfig, mode) {
     const modeConfig = moduleConfig[mode] || moduleConfig.practice;
     
@@ -1117,6 +850,140 @@ class ComprehensiveRoleplayEngine {
     return prompts[Math.floor(Math.random() * prompts.length)];
   }
 
+  // Record session completion and unlock progression
+  async completeSession(sessionPassed, metrics) {
+    try {
+      if (!this.currentSession) {
+        return { success: false, error: 'No active session' };
+      }
+
+      logger.log('🏁 [COMPREHENSIVE] Completing session:', { 
+        sessionPassed, 
+        roleplayType: this.currentSession.roleplayType,
+        mode: this.currentSession.mode 
+      });
+
+      // Record session in database
+      const sessionResult = await this.recordSessionInDatabase(sessionPassed, metrics);
+      
+      // Handle unlocks if session passed
+      let unlocks = [];
+      if (sessionPassed) {
+        unlocks = await this.handleUnlocks();
+      }
+
+      // Generate coaching feedback
+      const coaching = this.generateCoaching();
+
+      // Clean up session
+      const completedSession = this.currentSession;
+      this.currentSession = null;
+      this.sessionState = null;
+      openAIService.resetConversation();
+
+      return {
+        success: true,
+        sessionPassed,
+        metrics: metrics || this.calculateSessionMetrics(),
+        unlocks,
+        coaching,
+        sessionId: completedSession.id,
+        sessionComplete: true
+      };
+
+    } catch (error) {
+      logger.error('❌ [COMPREHENSIVE] Error completing session:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Record session in database with proper scoring
+  async recordSessionInDatabase(passed, metrics) {
+    try {
+      const sessionData = {
+        user_id: this.currentSession.userId,
+        roleplay_type: this.currentSession.roleplayType,
+        mode: this.currentSession.mode,
+        passed: passed,
+        score: metrics?.averageScore || 0,
+        session_data: {
+          metrics,
+          evaluations: this.sessionState?.evaluations || [],
+          callResults: this.sessionState?.callResults || []
+        },
+        created_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('session_logs')
+        .insert(sessionData)
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to record session:', error);
+        return null;
+      }
+
+      // Update user progress
+      await this.updateUserProgress(passed, metrics);
+
+      return data;
+    } catch (error) {
+      logger.error('Error recording session:', error);
+      return null;
+    }
+  }
+
+  // Update user progress and unlock tracking
+  async updateUserProgress(passed, metrics) {
+    try {
+      const { roleplayType, mode } = this.currentSession;
+      
+      // Get current progress
+      const { data: currentProgress } = await supabase
+        .from('user_progress')
+        .select('*')
+        .eq('user_id', this.currentSession.userId)
+        .eq('roleplay_type', roleplayType)
+        .single();
+
+      const progressData = {
+        user_id: this.currentSession.userId,
+        roleplay_type: roleplayType,
+        total_attempts: (currentProgress?.total_attempts || 0) + 1,
+        total_passes: (currentProgress?.total_passes || 0) + (passed ? 1 : 0),
+        marathon_passes: mode === 'marathon' && passed 
+          ? (currentProgress?.marathon_passes || 0) + 1 
+          : (currentProgress?.marathon_passes || 0),
+        legend_completed: mode === 'legend' && passed
+          ? true
+          : (currentProgress?.legend_completed || false),
+        legend_attempt_used: mode === 'legend' 
+          ? true 
+          : (currentProgress?.legend_attempt_used || false),
+        best_score: Math.max(
+          currentProgress?.best_score || 0, 
+          metrics?.averageScore || 0
+        ),
+        updated_at: new Date().toISOString()
+      };
+
+      await supabase
+        .from('user_progress')
+        .upsert(progressData, {
+          onConflict: 'user_id,roleplay_type'
+        });
+
+      logger.log('✅ Progress updated successfully');
+    } catch (error) {
+      logger.error('❌ Error updating progress:', error);
+    }
+  }
+
   // Handle module unlocks based on client specifications
   async handleUnlocks() {
     try {
@@ -1135,44 +1002,34 @@ class ComprehensiveRoleplayEngine {
         const unlockExpiry = new Date();
         unlockExpiry.setHours(unlockExpiry.getHours() + 24);
         
-        try {
-          await supabase
-            .from('user_progress')
-            .upsert({
-              user_id: this.currentSession.userId,
-              roleplay_type: config.unlocks,
-              unlock_expiry: unlockExpiry.toISOString(),
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'user_id,roleplay_type'
-            });
-
-          // Reset legend attempt for this module
-          await supabase
-            .from('user_progress')
-            .upsert({
-              user_id: this.currentSession.userId,
-              roleplay_type: roleplayType,
-              legend_attempt_used: false,
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'user_id,roleplay_type'
-            });
-
-          unlocks.push({
-            module: config.unlocks,
-            duration: '24 hours',
-            reason: 'Marathon passed'
+        await supabase
+          .from('user_progress')
+          .upsert({
+            user_id: this.currentSession.userId,
+            roleplay_type: config.unlocks,
+            unlock_expiry: unlockExpiry.toISOString(),
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id,roleplay_type'
           });
-        } catch (unlockError) {
-          logger.warn('Unlock database update failed:', unlockError);
-          // Still return the unlock info even if database update fails
-          unlocks.push({
-            module: config.unlocks,
-            duration: '24 hours',
-            reason: 'Marathon passed (database update pending)'
+
+        // Reset legend attempt for this module
+        await supabase
+          .from('user_progress')
+          .upsert({
+            user_id: this.currentSession.userId,
+            roleplay_type: roleplayType,
+            legend_attempt_used: false,
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id,roleplay_type'
           });
-        }
+
+        unlocks.push({
+          module: config.unlocks,
+          duration: '24 hours',
+          reason: 'Marathon passed'
+        });
       }
 
       return unlocks;
@@ -1274,6 +1131,53 @@ class ComprehensiveRoleplayEngine {
     };
 
     return stageFlow[currentStage] || 'call_end';
+  }
+
+  // Get user data with fallback
+  async getUserData(userId, userProfile) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('access_level, first_name, prospect_job_title, prospect_industry, custom_behavior_notes')
+        .eq('id', userId)
+        .single();
+
+      if (!error && data) {
+        return data;
+      } else {
+        // Fallback to userProfile
+        return {
+          access_level: userProfile?.access_level || 'trial',
+          first_name: userProfile?.first_name || 'User',
+          prospect_job_title: userProfile?.prospect_job_title || 'CEO',
+          prospect_industry: userProfile?.prospect_industry || 'Technology',
+          custom_behavior_notes: userProfile?.custom_behavior_notes || ''
+        };
+      }
+    } catch (error) {
+      logger.warn('Failed to get user data, using fallback');
+      return {
+        access_level: userProfile?.access_level || 'trial',
+        first_name: userProfile?.first_name || 'User',
+        prospect_job_title: userProfile?.prospect_job_title || 'CEO',
+        prospect_industry: userProfile?.prospect_industry || 'Technology',
+        custom_behavior_notes: userProfile?.custom_behavior_notes || ''
+      };
+    }
+  }
+
+  // Validate access
+  async validateAccess(userData, roleplayType, mode) {
+    // First module always available
+    if (roleplayType === 'opener_practice') {
+      return true;
+    }
+    // Unlimited users get everything
+    if (userData.access_level === 'unlimited') {
+      return true;
+    }
+    // For now, allow access to prevent blocking
+    return true;
   }
 
   // Create character

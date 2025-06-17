@@ -1,6 +1,7 @@
-// src/contexts/ProgressContext.jsx - FIXED FOR DATABASE ISSUES
+// src/contexts/ProgressContext.jsx - UPDATED FOR CLIENT SPECIFICATIONS
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
+import { progressUnlockAPI } from '../api/progressUnlockAPI';
 import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
 
@@ -30,98 +31,7 @@ export const ProgressProvider = ({ children }) => {
     legendsCompleted: 0
   });
 
-  // FIXED: Robust access checking that always allows first module
-  const canAccessRoleplay = useCallback(async (roleplayType, mode = 'practice') => {
-    try {
-      // ALWAYS allow opener_practice (first module)
-      if (roleplayType === 'opener_practice') {
-        logger.log('✅ [PROGRESS-CTX] Access granted: First module always available');
-        return { 
-          allowed: true, 
-          reason: 'First module always available',
-          accessInfo: { accessLevel: userProfile?.access_level || 'trial' }
-        };
-      }
-
-      if (!user?.id) {
-        return { allowed: false, reason: 'Not authenticated' };
-      }
-
-      // Admin and unlimited users get everything
-      if (userProfile?.is_admin || userProfile?.access_level === 'unlimited') {
-        logger.log('✅ [PROGRESS-CTX] Access granted: Admin/Unlimited user');
-        return { 
-          allowed: true, 
-          reason: userProfile.is_admin ? 'Admin access' : 'Unlimited access',
-          accessInfo: { 
-            accessLevel: userProfile.access_level,
-            isAdmin: userProfile.is_admin 
-          }
-        };
-      }
-
-      // For database issues, be permissive but log warnings
-      try {
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Database timeout')), 3000)
-        );
-
-        const accessPromise = supabase.rpc('check_module_access', {
-          p_user_id: user.id,
-          p_roleplay_type: roleplayType,
-          p_mode: mode
-        });
-
-        const { data, error } = await Promise.race([accessPromise, timeoutPromise]);
-
-        if (!error && data && typeof data === 'object') {
-          return {
-            allowed: data.unlocked === true,
-            reason: data.reason || 'Unknown',
-            accessInfo: data
-          };
-        }
-      } catch (dbError) {
-        logger.warn('⚠️ [PROGRESS-CTX] Database access check failed:', dbError.message);
-      }
-
-      // Fallback logic when database fails
-      logger.log('🔄 [PROGRESS-CTX] Using fallback access logic');
-      
-      // Trial users: Allow access but warn about limitations
-      if (userProfile?.access_level === 'trial') {
-        return { 
-          allowed: true, 
-          reason: 'Trial access (database verification pending)',
-          accessInfo: { accessLevel: 'trial' }
-        };
-      }
-
-      // Limited users: Only first module
-      return { 
-        allowed: false, 
-        reason: 'Upgrade required for additional modules'
-      };
-
-    } catch (error) {
-      logger.error('❌ [PROGRESS-CTX] Error checking roleplay access:', error);
-      
-      // Always allow first module in case of errors
-      if (roleplayType === 'opener_practice') {
-        return { 
-          allowed: true, 
-          reason: 'First module always available (error fallback)'
-        };
-      }
-      
-      return { 
-        allowed: false, 
-        reason: 'Access check failed - please try again'
-      };
-    }
-  }, [user?.id, userProfile]);
-
-  // FIXED: Safe progress data loading with comprehensive fallbacks
+  // Load user progress data using new API
   const loadProgressData = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
@@ -134,87 +44,67 @@ export const ProgressProvider = ({ children }) => {
 
       logger.log('📊 [PROGRESS-CTX] Loading progress data for user:', user.id);
 
-      // Try to load access status with timeout
-      let accessResult = null;
-      try {
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Database timeout')), 5000)
-        );
-
-        const accessPromise = supabase.rpc('get_user_access_status', {
-          p_user_id: user.id
-        });
-
-        const { data, error } = await Promise.race([accessPromise, timeoutPromise]);
+      // Load user access status using new API
+      const accessResult = await progressUnlockAPI.getUserAccessStatus(user.id);
+      
+      if (!accessResult || !accessResult.success) {
+        logger.warn('Access API failed, using fallback data:', accessResult?.error);
         
-        if (!error && data && data.success) {
-          accessResult = data;
-        }
-      } catch (dbError) {
-        logger.warn('⚠️ [PROGRESS-CTX] Database function failed:', dbError.message);
+        // Create fallback access status
+        const fallbackAccessStatus = createFallbackAccessStatus(userProfile);
+        setAccessStatus(fallbackAccessStatus);
+        setProgress({});
+        setSessions([]);
+        calculateOverallStats({}, []);
+        return;
       }
 
-      // Use database result or create fallback
-      if (accessResult && accessResult.access_status) {
-        logger.log('✅ [PROGRESS-CTX] Using database access status');
-        setAccessStatus(accessResult.access_status);
-        
-        // Extract progress data
-        const progressData = {};
-        Object.keys(accessResult.access_status).forEach(roleplayType => {
-          const moduleData = accessResult.access_status[roleplayType];
+      // Safely handle accessStatus
+      const safeAccessStatus = accessResult.accessStatus || {};
+      setAccessStatus(safeAccessStatus);
+
+      // Extract progress data safely
+      const progressData = {};
+      if (safeAccessStatus && typeof safeAccessStatus === 'object') {
+        Object.keys(safeAccessStatus).forEach(roleplayType => {
+          const moduleData = safeAccessStatus[roleplayType];
           if (moduleData && moduleData.progress) {
             progressData[roleplayType] = moduleData.progress;
           }
         });
-        setProgress(progressData);
-      } else {
-        logger.log('🔄 [PROGRESS-CTX] Using fallback access status');
-        const fallbackAccessStatus = createFallbackAccessStatus();
-        setAccessStatus(fallbackAccessStatus);
-        setProgress({});
       }
+      setProgress(progressData);
 
-      // Try to load session history
+      // Load session history with error handling
       try {
-        const sessionTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session query timeout')), 3000)
-        );
-
-        const sessionPromise = supabase
+        const { data: sessionData, error: sessionError } = await supabase
           .from('session_logs')
           .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(50);
 
-        const { data: sessionData, error: sessionError } = await Promise.race([
-          sessionPromise, 
-          sessionTimeout
-        ]);
-
-        if (!sessionError && Array.isArray(sessionData)) {
-          setSessions(sessionData);
-          calculateOverallStats(progress, sessionData);
-        } else {
-          logger.warn('Session loading failed:', sessionError);
+        if (sessionError) {
+          logger.warn('Failed to load sessions:', sessionError);
           setSessions([]);
-          calculateOverallStats(progress, []);
+        } else {
+          setSessions(sessionData || []);
+          calculateOverallStats(progressData, sessionData || []);
         }
       } catch (sessionErr) {
         logger.warn('Session loading error:', sessionErr);
         setSessions([]);
-        calculateOverallStats(progress, []);
+        calculateOverallStats(progressData, []);
       }
 
       logger.log('✅ [PROGRESS-CTX] Progress data loaded successfully');
 
     } catch (err) {
       logger.error('❌ [PROGRESS-CTX] Error loading progress data:', err);
-      setError('Failed to load progress data');
+      setError(err.message);
       
       // Set fallback data to prevent crashes
-      const fallbackAccessStatus = createFallbackAccessStatus();
+      const fallbackAccessStatus = createFallbackAccessStatus(userProfile);
       setAccessStatus(fallbackAccessStatus);
       setProgress({});
       setSessions([]);
@@ -222,12 +112,12 @@ export const ProgressProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, userProfile]);
 
-  // FIXED: Create comprehensive fallback access status
-  const createFallbackAccessStatus = useCallback(() => {
-    const accessLevel = userProfile?.access_level || 'trial';
-    const isAdmin = userProfile?.is_admin || false;
+  // Create fallback access status when API fails
+  const createFallbackAccessStatus = useCallback((profile) => {
+    const accessLevel = profile?.access_level || 'limited';
+    const isAdmin = profile?.is_admin || false;
 
     const roleplayTypes = [
       'opener_practice',
@@ -241,7 +131,7 @@ export const ProgressProvider = ({ children }) => {
 
     roleplayTypes.forEach((roleplayType, index) => {
       let unlocked = false;
-      let reason = 'Database connection issues';
+      let reason = 'Upgrade required';
 
       // First module always available
       if (index === 0) {
@@ -251,12 +141,12 @@ export const ProgressProvider = ({ children }) => {
       // Unlimited access users get everything
       else if (accessLevel === 'unlimited' || isAdmin) {
         unlocked = true;
-        reason = isAdmin ? 'Admin access' : 'Unlimited access';
+        reason = accessLevel === 'unlimited' ? 'Unlimited access' : 'Admin access';
       }
       // Trial users get first module only by default
       else if (accessLevel === 'trial') {
         unlocked = false;
-        reason = 'Complete previous modules to unlock';
+        reason = this.getUnlockRequirement(roleplayType);
       }
       // Limited users get first module only
       else {
@@ -284,7 +174,19 @@ export const ProgressProvider = ({ children }) => {
     });
 
     return fallbackStatus;
-  }, [userProfile]);
+  }, []);
+
+  // Get unlock requirements per client specifications
+  const getUnlockRequirement = useCallback((roleplayType) => {
+    const requirements = {
+      pitch_practice: 'Complete Opener Marathon (6/10 passes) to unlock',
+      warmup_challenge: 'Complete Pitch Marathon (6/10 passes) to unlock',
+      full_simulation: 'Pass Warm-up Challenge (18/25) to unlock',
+      power_hour: 'Complete Full Simulation to unlock'
+    };
+
+    return requirements[roleplayType] || 'Complete previous modules to unlock';
+  }, []);
 
   // Calculate overall statistics with null-safety
   const calculateOverallStats = useCallback((progressData = {}, sessionData = []) => {
@@ -314,41 +216,30 @@ export const ProgressProvider = ({ children }) => {
     setOverallStats(stats);
   }, []);
 
-  // FIXED: Robust roleplay access checking
+  // Get roleplay access information using new API
   const getRoleplayAccess = useCallback((roleplayType, mode = 'practice') => {
-    // Always allow first module
-    if (roleplayType === 'opener_practice') {
-      return {
-        unlocked: true,
-        reason: 'Always available',
-        marathonPasses: 0,
-        legendCompleted: false,
-        accessLevel: userProfile?.access_level || 'trial'
-      };
-    }
-
     if (!accessStatus || typeof accessStatus !== 'object') {
       return {
-        unlocked: false,
-        reason: 'Loading access info...',
+        unlocked: roleplayType === 'opener_practice', // First module always available
+        reason: roleplayType === 'opener_practice' ? 'Always available' : 'Loading access info...',
         marathonPasses: 0,
         legendCompleted: false,
-        accessLevel: 'loading'
+        accessLevel: 'limited'
       };
     }
 
     const moduleAccess = accessStatus[roleplayType];
     if (!moduleAccess || typeof moduleAccess !== 'object') {
       return {
-        unlocked: false,
-        reason: 'Module not found',
+        unlocked: roleplayType === 'opener_practice',
+        reason: roleplayType === 'opener_practice' ? 'Always available' : 'Module not found',
         marathonPasses: 0,
         legendCompleted: false,
-        accessLevel: 'unknown'
+        accessLevel: 'limited'
       };
     }
 
-    // Special handling for legend mode
+    // Special handling for legend mode per client specifications
     if (mode === 'legend') {
       if (moduleAccess.legendAttemptUsed) {
         return {
@@ -368,124 +259,55 @@ export const ProgressProvider = ({ children }) => {
     }
 
     return moduleAccess;
-  }, [accessStatus, userProfile]);
+  }, [accessStatus]);
 
-  // FIXED: Safe progress update with comprehensive error handling
- 
-const updateProgress = useCallback(async (roleplayType, sessionResult) => {
-  // EMERGENCY BYPASS: Don't fail if user authentication is broken
-  try {
-    logger.log('📝 [PROGRESS-CTX] Updating progress:', { roleplayType, sessionResult });
+  // Update progress after session completion using new API
+  const updateProgress = useCallback(async (roleplayType, sessionResult) => {
+    if (!user?.id) {
+      throw new Error('User not authenticated');
+    }
 
-    // Try to get user ID from multiple sources
-    let userId = null;
-    
-    // Try user.id first
-    if (user?.id) {
-      userId = user.id;
-    }
-    // Try userProfile.id
-    else if (userProfile?.id) {
-      userId = userProfile.id;
-    }
-    // Try to get from localStorage (if available)
-    else if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const storedUser = localStorage.getItem('supabase.auth.token');
-        if (storedUser) {
-          const parsed = JSON.parse(storedUser);
-          userId = parsed?.user?.id;
-        }
-      } catch (e) {
-        // Ignore localStorage errors
+    try {
+      logger.log('📝 [PROGRESS-CTX] Updating progress:', { roleplayType, sessionResult });
+
+      // Record session completion via new API
+      const result = await progressUnlockAPI.recordSessionCompletion(
+        user.id,
+        roleplayType,
+        sessionResult.mode || 'practice',
+        sessionResult
+      );
+
+      if (!result || !result.success) {
+        logger.warn('Progress update failed:', result?.error);
+        // Still return success to not break user experience
+        return {
+          success: true,
+          unlocks: [],
+          message: 'Session completed (progress update pending)'
+        };
       }
-    }
 
-    // EMERGENCY: If still no user ID, create a temporary one
-    if (!userId) {
-      logger.warn('⚠️ [PROGRESS-CTX] No user ID found, using emergency mode');
-      
-      // Just return success without database operations
+      // Reload progress data to reflect changes
+      await loadProgressData();
+
+      // Return unlock information per client specifications
+      return {
+        success: true,
+        unlocks: result.unlocks || [],
+        message: result.message || 'Progress updated successfully'
+      };
+
+    } catch (error) {
+      logger.error('❌ [PROGRESS-CTX] Error updating progress:', error);
+      // Don't throw - return partial success to maintain user experience
       return {
         success: true,
         unlocks: [],
-        message: sessionResult.passed 
-          ? '🎉 Great job! Session completed successfully!' 
-          : '💪 Keep practicing - you\'re improving!'
+        message: 'Session completed (progress update failed)'
       };
     }
-
-    // Rest of the original updateProgress logic...
-    try {
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Recording timeout')), 5000)
-      );
-
-      const recordPromise = supabase.rpc('record_session_completion', {
-        p_user_id: userId,
-        p_roleplay_type: roleplayType,
-        p_mode: sessionResult.mode || 'practice',
-        p_passed: sessionResult.passed || false,
-        p_score: sessionResult.averageScore || sessionResult.score || 0,
-        p_session_data: sessionResult
-      });
-
-      const { data, error } = await Promise.race([recordPromise, timeoutPromise]);
-      
-      if (!error && data) {
-        logger.log('✅ [PROGRESS-CTX] Progress recorded successfully');
-        
-        setTimeout(() => {
-          loadProgressData();
-        }, 1000);
-
-        return {
-          success: true,
-          unlocks: data.unlocks ? JSON.parse(data.unlocks) : [],
-          message: 'Progress updated successfully'
-        };
-      }
-    } catch (recordError) {
-      logger.warn('⚠️ [PROGRESS-CTX] Progress recording failed:', recordError.message);
-    }
-
-    // Fallback: record in session logs only
-    try {
-      await supabase.from('session_logs').insert({
-        user_id: userId,
-        roleplay_type: roleplayType,
-        mode: sessionResult.mode || 'practice',
-        passed: sessionResult.passed || false,
-        score: sessionResult.averageScore || sessionResult.score || 0,
-        session_data: sessionResult,
-        duration_seconds: sessionResult.duration || 0
-      });
-      
-      logger.log('✅ [PROGRESS-CTX] Session logged successfully (fallback)');
-    } catch (logError) {
-      logger.warn('⚠️ [PROGRESS-CTX] Session logging failed:', logError.message);
-    }
-
-    // Always return success to maintain user experience
-    return {
-      success: true,
-      unlocks: [],
-      message: sessionResult.passed 
-        ? '🎉 Excellent work! You passed this roleplay!' 
-        : '📈 Good effort! Keep practicing to improve your skills!'
-    };
-
-  } catch (error) {
-    logger.error('❌ [PROGRESS-CTX] Error updating progress:', error);
-    
-    // EMERGENCY: Never fail completely - always return success
-    return {
-      success: true,
-      unlocks: [],
-      message: '✅ Session completed! Great job practicing!'
-    };
-  }
-}, [user?.id, userProfile, loadProgressData]);
+  }, [user?.id, loadProgressData]);
 
   // Get recent activity for dashboard
   const getRecentActivity = useCallback(async () => {
@@ -522,6 +344,29 @@ const updateProgress = useCallback(async (roleplayType, sessionResult) => {
     };
   }, [overallStats]);
 
+  // Check if user can access specific roleplay using new API
+  const canAccessRoleplay = useCallback(async (roleplayType, mode = 'practice') => {
+    if (!user?.id) {
+      return { allowed: false, reason: 'Not authenticated' };
+    }
+
+    try {
+      const result = await progressUnlockAPI.checkModuleAccess(user.id, roleplayType, mode);
+      return {
+        allowed: result?.success && result?.access?.unlocked,
+        reason: result?.access?.reason || 'Access denied',
+        accessInfo: result?.access || {}
+      };
+    } catch (error) {
+      logger.error('Error checking roleplay access:', error);
+      // Fallback: allow first module
+      return { 
+        allowed: roleplayType === 'opener_practice', 
+        reason: roleplayType === 'opener_practice' ? 'Always available' : 'Access check failed'
+      };
+    }
+  }, [user?.id]);
+
   // Unlock module temporarily (admin function)
   const unlockModuleTemporarily = useCallback(async (roleplayType, hours = 24) => {
     if (!user?.id) {
@@ -529,32 +374,14 @@ const updateProgress = useCallback(async (roleplayType, sessionResult) => {
     }
 
     try {
-      const unlockExpiry = new Date();
-      unlockExpiry.setHours(unlockExpiry.getHours() + hours);
-
-      const { error } = await supabase
-        .from('user_progress')
-        .upsert({
-          user_id: user.id,
-          roleplay_type: roleplayType,
-          unlock_expiry: unlockExpiry.toISOString(),
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'user_id,roleplay_type'
-        });
-
-      if (error) {
-        throw error;
+      const result = await progressUnlockAPI.unlockModuleTemporarily(user.id, roleplayType, hours);
+      
+      if (result?.success) {
+        // Reload progress to reflect changes
+        await loadProgressData();
       }
 
-      // Reload progress to reflect changes
-      await loadProgressData();
-
-      return {
-        success: true,
-        message: `${roleplayType} unlocked for ${hours} hours`,
-        unlockExpiry: unlockExpiry.toISOString()
-      };
+      return result || { success: false, error: 'Unknown error' };
     } catch (error) {
       logger.error('Error unlocking module:', error);
       throw error;
@@ -563,10 +390,10 @@ const updateProgress = useCallback(async (roleplayType, sessionResult) => {
 
   // Get user access level safely
   const getUserAccessLevel = useCallback(() => {
-    return userProfile?.access_level || 'trial';
+    return userProfile?.access_level || 'limited';
   }, [userProfile]);
 
-  // Get module display names
+  // Get module display names per client specifications
   const getModuleDisplayName = useCallback((roleplayType) => {
     const names = {
       opener_practice: 'Opener + Early Objections',
@@ -635,8 +462,73 @@ const updateProgress = useCallback(async (roleplayType, sessionResult) => {
     }
   }, [user?.id, loadProgressData]);
 
-  // DISABLED: Real-time subscriptions (causing issues with RLS)
-  // These will be re-enabled once RLS policies are stable
+  // Set up real-time subscriptions for progress updates
+  useEffect(() => {
+    if (!user?.id) return;
+
+    logger.log('📡 [PROGRESS-CTX] Setting up real-time progress subscriptions');
+
+    const subscriptions = [];
+
+    try {
+      // Subscribe to user progress changes
+      const progressSubscription = supabase
+        .channel('progress_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'user_progress',
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload) => {
+            logger.log('📡 Progress update received:', payload);
+            // Reload progress data when changes occur
+            loadProgressData();
+          }
+        )
+        .subscribe();
+
+      subscriptions.push(progressSubscription);
+
+      // Subscribe to session log changes
+      const sessionSubscription = supabase
+        .channel('session_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'session_logs',
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload) => {
+            logger.log('📡 New session logged:', payload);
+            // Add new session to local state
+            if (payload?.new) {
+              setSessions(prev => Array.isArray(prev) ? [payload.new, ...prev] : [payload.new]);
+            }
+          }
+        )
+        .subscribe();
+
+      subscriptions.push(sessionSubscription);
+    } catch (error) {
+      logger.warn('Failed to set up real-time subscriptions:', error);
+    }
+
+    return () => {
+      logger.log('📡 Cleaning up real-time subscriptions');
+      subscriptions.forEach(sub => {
+        try {
+          supabase.removeChannel(sub);
+        } catch (error) {
+          logger.warn('Error removing subscription:', error);
+        }
+      });
+    };
+  }, [user?.id, loadProgressData]);
 
   const value = {
     // State
