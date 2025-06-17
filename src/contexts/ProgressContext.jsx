@@ -1,7 +1,7 @@
-// src/contexts/ProgressContext.jsx - UPDATED FOR CLIENT SPECIFICATIONS
+// src/contexts/ProgressContext.jsx - FIXED to handle null/undefined data safely
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { progressUnlockAPI } from '../api/progressUnlockAPI';
+import { accessLevelAPI } from '../api/accessLevelAPI';
 import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
 
@@ -31,7 +31,7 @@ export const ProgressProvider = ({ children }) => {
     legendsCompleted: 0
   });
 
-  // Load user progress data using new API
+  // Load user progress data with null-safety
   const loadProgressData = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
@@ -42,10 +42,10 @@ export const ProgressProvider = ({ children }) => {
       setLoading(true);
       setError(null);
 
-      logger.log('📊 [PROGRESS-CTX] Loading progress data for user:', user.id);
+      logger.log('📊 Loading progress data for user:', user.id);
 
-      // Load user access status using new API
-      const accessResult = await progressUnlockAPI.getUserAccessStatus(user.id);
+      // Load user access status with error handling
+      const accessResult = await accessLevelAPI.getUserAccessStatus(user.id);
       
       if (!accessResult || !accessResult.success) {
         logger.warn('Access API failed, using fallback data:', accessResult?.error);
@@ -59,7 +59,7 @@ export const ProgressProvider = ({ children }) => {
         return;
       }
 
-      // Safely handle accessStatus
+      // Safely handle accessStatus - prevent Object.keys error
       const safeAccessStatus = accessResult.accessStatus || {};
       setAccessStatus(safeAccessStatus);
 
@@ -89,18 +89,19 @@ export const ProgressProvider = ({ children }) => {
           setSessions([]);
         } else {
           setSessions(sessionData || []);
-          calculateOverallStats(progressData, sessionData || []);
         }
       } catch (sessionErr) {
         logger.warn('Session loading error:', sessionErr);
         setSessions([]);
-        calculateOverallStats(progressData, []);
       }
 
-      logger.log('✅ [PROGRESS-CTX] Progress data loaded successfully');
+      // Calculate overall stats safely
+      calculateOverallStats(progressData, sessions);
+
+      logger.log('✅ Progress data loaded successfully');
 
     } catch (err) {
-      logger.error('❌ [PROGRESS-CTX] Error loading progress data:', err);
+      logger.error('❌ Error loading progress data:', err);
       setError(err.message);
       
       // Set fallback data to prevent crashes
@@ -112,7 +113,7 @@ export const ProgressProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [user?.id, userProfile]);
+  }, [user?.id, userProfile, sessions]);
 
   // Create fallback access status when API fails
   const createFallbackAccessStatus = useCallback((profile) => {
@@ -141,17 +142,12 @@ export const ProgressProvider = ({ children }) => {
       // Unlimited access users get everything
       else if (accessLevel === 'unlimited' || isAdmin) {
         unlocked = true;
-        reason = accessLevel === 'unlimited' ? 'Unlimited access' : 'Admin access';
+        reason = 'Unlimited access';
       }
       // Trial users get first module only by default
       else if (accessLevel === 'trial') {
         unlocked = false;
-        reason = this.getUnlockRequirement(roleplayType);
-      }
-      // Limited users get first module only
-      else {
-        unlocked = false;
-        reason = 'Upgrade to access additional modules';
+        reason = 'Complete previous marathon to unlock';
       }
 
       fallbackStatus[roleplayType] = {
@@ -174,18 +170,6 @@ export const ProgressProvider = ({ children }) => {
     });
 
     return fallbackStatus;
-  }, []);
-
-  // Get unlock requirements per client specifications
-  const getUnlockRequirement = useCallback((roleplayType) => {
-    const requirements = {
-      pitch_practice: 'Complete Opener Marathon (6/10 passes) to unlock',
-      warmup_challenge: 'Complete Pitch Marathon (6/10 passes) to unlock',
-      full_simulation: 'Pass Warm-up Challenge (18/25) to unlock',
-      power_hour: 'Complete Full Simulation to unlock'
-    };
-
-    return requirements[roleplayType] || 'Complete previous modules to unlock';
   }, []);
 
   // Calculate overall statistics with null-safety
@@ -216,7 +200,7 @@ export const ProgressProvider = ({ children }) => {
     setOverallStats(stats);
   }, []);
 
-  // Get roleplay access information using new API
+  // Get roleplay access information with null-safety
   const getRoleplayAccess = useCallback((roleplayType, mode = 'practice') => {
     if (!accessStatus || typeof accessStatus !== 'object') {
       return {
@@ -239,39 +223,28 @@ export const ProgressProvider = ({ children }) => {
       };
     }
 
-    // Special handling for legend mode per client specifications
-    if (mode === 'legend') {
-      if (moduleAccess.legendAttemptUsed) {
-        return {
-          ...moduleAccess,
-          unlocked: false,
-          reason: 'Legend attempt used. Pass Marathon again for another chance.'
-        };
-      }
-      
-      if ((moduleAccess.marathonPasses || 0) < 6) {
-        return {
-          ...moduleAccess,
-          unlocked: false,
-          reason: 'Need 6 Marathon passes to unlock Legend mode.'
-        };
-      }
-    }
-
-    return moduleAccess;
+    return {
+      unlocked: moduleAccess.unlocked || false,
+      reason: moduleAccess.reason || 'Access denied',
+      marathonPasses: moduleAccess.marathonPasses || 0,
+      legendCompleted: moduleAccess.legendCompleted || false,
+      legendAttemptUsed: moduleAccess.legendAttemptUsed !== false,
+      unlockExpiry: moduleAccess.unlockExpiry,
+      accessLevel: moduleAccess.accessLevel || 'limited'
+    };
   }, [accessStatus]);
 
-  // Update progress after session completion using new API
+  // Update progress after session completion
   const updateProgress = useCallback(async (roleplayType, sessionResult) => {
     if (!user?.id) {
       throw new Error('User not authenticated');
     }
 
     try {
-      logger.log('📝 [PROGRESS-CTX] Updating progress:', { roleplayType, sessionResult });
+      logger.log('📝 Updating progress:', { roleplayType, sessionResult });
 
-      // Record session completion via new API
-      const result = await progressUnlockAPI.recordSessionCompletion(
+      // Record session completion via API
+      const result = await accessLevelAPI.recordSessionCompletion(
         user.id,
         roleplayType,
         sessionResult.mode || 'practice',
@@ -279,8 +252,8 @@ export const ProgressProvider = ({ children }) => {
       );
 
       if (!result || !result.success) {
-        logger.warn('Progress update failed:', result?.error);
-        // Still return success to not break user experience
+        logger.warn('Progress update failed, continuing without unlock:', result?.error);
+        // Don't throw error - just return basic success
         return {
           success: true,
           unlocks: [],
@@ -291,16 +264,16 @@ export const ProgressProvider = ({ children }) => {
       // Reload progress data to reflect changes
       await loadProgressData();
 
-      // Return unlock information per client specifications
+      // Return unlock information
       return {
         success: true,
         unlocks: result.unlocks || [],
-        message: result.message || 'Progress updated successfully'
+        message: result.message || 'Progress updated'
       };
 
     } catch (error) {
-      logger.error('❌ [PROGRESS-CTX] Error updating progress:', error);
-      // Don't throw - return partial success to maintain user experience
+      logger.error('❌ Error updating progress:', error);
+      // Don't throw - return partial success
       return {
         success: true,
         unlocks: [],
@@ -344,14 +317,14 @@ export const ProgressProvider = ({ children }) => {
     };
   }, [overallStats]);
 
-  // Check if user can access specific roleplay using new API
+  // Check if user can access specific roleplay
   const canAccessRoleplay = useCallback(async (roleplayType, mode = 'practice') => {
     if (!user?.id) {
       return { allowed: false, reason: 'Not authenticated' };
     }
 
     try {
-      const result = await progressUnlockAPI.checkModuleAccess(user.id, roleplayType, mode);
+      const result = await accessLevelAPI.checkModuleAccess(user.id, roleplayType, mode);
       return {
         allowed: result?.success && result?.access?.unlocked,
         reason: result?.access?.reason || 'Access denied',
@@ -374,7 +347,7 @@ export const ProgressProvider = ({ children }) => {
     }
 
     try {
-      const result = await progressUnlockAPI.unlockModuleTemporarily(user.id, roleplayType, hours);
+      const result = await accessLevelAPI.unlockModuleTemporarily(user.id, roleplayType, hours);
       
       if (result?.success) {
         // Reload progress to reflect changes
@@ -392,44 +365,6 @@ export const ProgressProvider = ({ children }) => {
   const getUserAccessLevel = useCallback(() => {
     return userProfile?.access_level || 'limited';
   }, [userProfile]);
-
-  // Get module display names per client specifications
-  const getModuleDisplayName = useCallback((roleplayType) => {
-    const names = {
-      opener_practice: 'Opener + Early Objections',
-      pitch_practice: 'Pitch + Objections + Close',
-      warmup_challenge: 'Warm-up Challenge',
-      full_simulation: 'Full Cold Call Simulation',
-      power_hour: 'Power Hour Challenge'
-    };
-
-    return names[roleplayType] || roleplayType;
-  }, []);
-
-  // Get unlock status with time remaining
-  const getUnlockStatus = useCallback((roleplayType) => {
-    const moduleAccess = accessStatus[roleplayType];
-    if (!moduleAccess) return null;
-
-    if (!moduleAccess.unlockExpiry) return null;
-
-    const now = new Date();
-    const unlockExpiry = new Date(moduleAccess.unlockExpiry);
-    
-    if (unlockExpiry <= now) {
-      return { expired: true };
-    }
-
-    const hoursRemaining = Math.ceil((unlockExpiry - now) / (1000 * 60 * 60));
-    const minutesRemaining = Math.ceil((unlockExpiry - now) / (1000 * 60));
-
-    return {
-      active: true,
-      hoursRemaining,
-      minutesRemaining,
-      expiresAt: unlockExpiry.toISOString()
-    };
-  }, [accessStatus]);
 
   // Helper function to format time ago
   const getTimeAgo = (dateString) => {
@@ -460,13 +395,13 @@ export const ProgressProvider = ({ children }) => {
     if (user?.id) {
       loadProgressData();
     }
-  }, [user?.id, loadProgressData]);
+  }, [user?.id]); // Removed loadProgressData dependency to prevent loops
 
   // Set up real-time subscriptions for progress updates
   useEffect(() => {
     if (!user?.id) return;
 
-    logger.log('📡 [PROGRESS-CTX] Setting up real-time progress subscriptions');
+    logger.log('📡 Setting up real-time progress subscriptions');
 
     const subscriptions = [];
 
@@ -548,8 +483,6 @@ export const ProgressProvider = ({ children }) => {
     canAccessRoleplay,
     unlockModuleTemporarily,
     getUserAccessLevel,
-    getModuleDisplayName,
-    getUnlockStatus,
 
     // Computed values
     userAccessLevel: getUserAccessLevel(),
