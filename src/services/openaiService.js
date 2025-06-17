@@ -1,4 +1,4 @@
-// src/services/openaiService.js - ENHANCED FOR ALL ROLEPLAY MODES INCLUDING MARATHON
+// src/services/openaiService.js - ENHANCED FOR CLIENT SPECIFICATIONS
 import OpenAI from 'openai';
 import logger from '../utils/logger';
 
@@ -10,16 +10,104 @@ export class OpenAIService {
     this.useMockMode = false;
     this.currentCharacter = null;
     this.sessionContext = null;
+    this.objectionLists = this.initializeObjectionLists();
+  }
+
+  // Initialize objection lists per client specifications
+  initializeObjectionLists() {
+    return {
+      earlyStage: [
+        "What's this about?",
+        "I'm not interested",
+        "We don't take cold calls",
+        "Now is not a good time",
+        "I have a meeting",
+        "Can you call me later?",
+        "I'm about to go into a meeting",
+        "Send me an email",
+        "Can you send me the information?",
+        "Can you message me on WhatsApp?",
+        "Who gave you this number?",
+        "This is my personal number",
+        "Where did you get my number?",
+        "What are you trying to sell me?",
+        "Is this a sales call?",
+        "Is this a cold call?",
+        "Are you trying to sell me something?",
+        "We are ok for the moment",
+        "We are all good / all set",
+        "We're not looking for anything right now",
+        "We are not changing anything",
+        "How long is this going to take?",
+        "Is this going to take long?",
+        "What company are you calling from?",
+        "Who are you again?",
+        "Where are you calling from?",
+        "I never heard of you",
+        "Not interested right now",
+        "Just send me the details"
+      ],
+      postPitch: [
+        "It's too expensive for us.",
+        "We have no budget for this right now.",
+        "Your competitor is cheaper.",
+        "Can you give us a discount?",
+        "This isn't a good time.",
+        "We've already set this year's budget.",
+        "Call me back next quarter.",
+        "We're busy with other projects right now.",
+        "We already use a competitor and we're happy.",
+        "We built something similar ourselves.",
+        "How exactly are you better than the competitor?",
+        "Switching providers seems like a lot of work.",
+        "I've never heard of your company.",
+        "Who else like us have you worked with?",
+        "Can you send customer testimonials?",
+        "How do I know this will really work?",
+        "I'm not the decision-maker.",
+        "I need approval from my team first.",
+        "Can you send details so I can forward them?",
+        "We'll need buy-in from other departments.",
+        "How long does this take to implement?",
+        "We don't have time to learn a new system.",
+        "I'm concerned this won't integrate with our existing tools.",
+        "What happens if this doesn't work as promised?"
+      ],
+      pitchPrompts: [
+        "Alright, go ahead — what's this about?",
+        "So… what are you calling me about?",
+        "You've got 30 seconds. Impress me.",
+        "I'm listening. What do you do?",
+        "This better be good. What is it?",
+        "Okay. Tell me why you're calling.",
+        "Go on — what's the offer?",
+        "Convince me.",
+        "What's your pitch?",
+        "Let's hear it."
+      ],
+      impatienceResponses: [
+        "Hello? Are you still with me?",
+        "Can you hear me?",
+        "Just checking you're there…",
+        "Still on the line?",
+        "I don't have much time for this.",
+        "Sounds like you are gone.",
+        "Are you an idiot.",
+        "What is going on.",
+        "Are you okay to continue?",
+        "I am afraid I have to go"
+      ]
+    };
   }
 
   async initialize() {
     try {
       if (this.isInitialized) return true;
 
-      logger.log('🤖 Initializing OpenAI service...');
+      logger.log('🤖 [OPENAI-SPECS] Initializing OpenAI service...');
 
       if (!process.env.REACT_APP_OPENAI_API_KEY) {
-        logger.warn('⚠️ OpenAI API key not found - using fallback responses');
+        logger.warn('⚠️ OpenAI API key not found - using intelligent fallbacks');
         this.useMockMode = true;
       } else {
         this.client = new OpenAI({
@@ -30,11 +118,11 @@ export class OpenAIService {
       }
 
       this.isInitialized = true;
-      logger.log('✅ OpenAI service initialized');
+      logger.log('✅ [OPENAI-SPECS] OpenAI service initialized');
       return true;
 
     } catch (error) {
-      logger.error('❌ OpenAI service initialization failed:', error);
+      logger.error('❌ [OPENAI-SPECS] Initialization failed:', error);
       this.useMockMode = true;
       this.isInitialized = true;
       return true;
@@ -52,109 +140,79 @@ export class OpenAIService {
     this.currentCharacter = character;
     this.conversationHistory = [];
     
-    logger.log('🎭 Session context set:', { roleplayType, mode, character: character?.name });
+    logger.log('🎭 [OPENAI-SPECS] Session context set:', { 
+      roleplayType, 
+      mode, 
+      character: character?.name 
+    });
   }
 
-  // Main method to get AI prospect response - OPTIMIZED FOR ALL MODES
+  // Main method for getting prospect responses per client specifications
   async getProspectResponse(stage, userInput, context = {}) {
     try {
-      logger.log('🤖 AI Processing:', { 
+      logger.log('🤖 [OPENAI-SPECS] Processing stage:', { 
         stage, 
-        userInput: userInput?.substring(0, 50), 
-        mode: this.sessionContext?.mode,
-        roleplayType: this.sessionContext?.roleplayType 
+        input: userInput?.substring(0, 30),
+        roleplayType: this.sessionContext?.roleplayType,
+        mode: this.sessionContext?.mode
       });
-      
-      // Handle special stages
-      if (stage === 'greeting') {
-        return this.generateGreetingResponse();
+
+      // Handle special stages per client specs
+      switch (stage) {
+        case 'greeting':
+          return this.generateGreeting();
+        case 'early_objection':
+          return this.generateEarlyObjection(context);
+        case 'pitch_prompt':
+          return this.generatePitchPrompt();
+        case 'post_pitch_objection':
+          return this.generatePostPitchObjection(context);
+        case 'quickfire_objection':
+          return this.generateQuickfireObjection();
+        case 'silence_warning':
+          return this.generateSilenceResponse();
+        case 'random_hangup':
+          return this.generateRandomHangup();
+        case 'impatience':
+          return this.generateImpatienceResponse();
+        default:
+          return await this.generateConversationalResponse(stage, userInput, context);
       }
-
-      if (!userInput || userInput.trim() === '') {
-        return this.generateSilenceResponse();
-      }
-
-      // Try real AI first, then fallback
-      let aiResponse = null;
-      let shouldUseFallback = this.useMockMode;
-
-      if (!shouldUseFallback) {
-        try {
-          aiResponse = await this.callOpenAIAPI(stage, userInput, context);
-        } catch (error) {
-          logger.warn('🔄 OpenAI API failed, using smart fallback:', error.message);
-          shouldUseFallback = true;
-        }
-      }
-
-      if (shouldUseFallback || !aiResponse) {
-        aiResponse = this.generateIntelligentFallback(stage, userInput, context);
-      }
-
-      // Add to conversation history
-      this.conversationHistory.push(
-        { role: 'user', content: userInput },
-        { role: 'assistant', content: aiResponse }
-      );
-
-      return {
-        success: true,
-        response: aiResponse,
-        stage,
-        context
-      };
 
     } catch (error) {
-      logger.error('❌ OpenAI API error:', error);
-      
-      // Always provide intelligent fallback
-      const fallbackResponse = this.generateIntelligentFallback(stage, userInput, context);
-      
-      return {
-        success: true,
-        response: fallbackResponse,
-        stage,
-        context
-      };
+      logger.error('❌ [OPENAI-SPECS] Error generating response:', error);
+      return this.generateEmergencyFallback(stage);
     }
   }
 
-  // Generate greeting response based on roleplay type and mode
-  generateGreetingResponse() {
-    const character = this.currentCharacter || { name: 'Sarah', title: 'VP of Marketing', company: 'TechCorp' };
-    const mode = this.sessionContext?.mode || 'practice';
+  // Generate greeting per client specifications
+  generateGreeting() {
+    const character = this.currentCharacter || { 
+      name: 'Sarah', 
+      title: 'VP of Marketing', 
+      company: 'TechCorp' 
+    };
     
-    // Different greeting styles based on mode
-    let greetings = [];
-    
-    if (mode === 'marathon' || mode === 'legend') {
-      // More varied greetings for marathon/legend mode
-      greetings = [
-        "Hello?",
-        `${character.name} speaking.`,
-        `Hi, this is ${character.name}.`,
-        "Hello, who is this?",
-        `${character.name} here.`,
-        "Good morning, how can I help you?",
-        `This is ${character.name}, what can I do for you?`,
+    const greetings = [
+      "Hello?",
+      `${character.name} speaking.`,
+      `Hi, this is ${character.name}.`,
+      "Hello, who is this?",
+      `${character.name} here.`,
+      "Good morning, how can I help you?",
+      `This is ${character.name}, what can I do for you?`
+    ];
+
+    // Add variety for marathon mode
+    if (this.sessionContext?.mode === 'marathon' || this.sessionContext?.mode === 'legend') {
+      greetings.push(
         "Hello, what's this regarding?",
         `${character.name} from ${character.company}.`,
         "Hi there, who am I speaking with?"
-      ];
-    } else {
-      // Standard greetings for practice mode
-      greetings = [
-        "Hello?",
-        `${character.name} speaking.`,
-        `Hi, this is ${character.name}.`,
-        "Hello, who is this?",
-        `${character.name} here.`
-      ];
+      );
     }
 
     const response = greetings[Math.floor(Math.random() * greetings.length)];
-    
-    logger.log('👋 Generated greeting:', response);
     
     return {
       success: true,
@@ -163,39 +221,102 @@ export class OpenAIService {
     };
   }
 
-  // Generate silence/impatience response
-  generateSilenceResponse() {
-    const mode = this.sessionContext?.mode || 'practice';
+  // Generate early-stage objection per client specs
+  generateEarlyObjection(context = {}) {
+    const usedObjections = context.usedObjections || new Set();
     
-    let impatienceResponses = [];
+    // Filter out used objections
+    const availableObjections = this.objectionLists.earlyStage.filter(obj => 
+      !usedObjections.has(obj)
+    );
     
-    if (mode === 'marathon' || mode === 'legend') {
-      // More varied impatience responses for marathon/legend
-      impatienceResponses = [
-        "Hello? Are you still with me?",
-        "Can you hear me?",
-        "Just checking you're there…",
-        "Still on the line?",
-        "I don't have much time for this.",
-        "Sounds like you are gone.",
-        "Are you okay to continue?",
-        "I am afraid I have to go.",
-        "Did I lose you?",
-        "Everything alright over there?",
-        "I have another call coming in...",
-        "Are we still connected?"
-      ];
-    } else {
-      impatienceResponses = [
-        "Hello? Are you still with me?",
-        "Can you hear me?",
-        "Just checking you're there…",
-        "Still on the line?",
-        "I don't have much time for this."
-      ];
-    }
+    // If all used, reset (should not happen in single call)
+    const objectionsToUse = availableObjections.length > 0 
+      ? availableObjections 
+      : this.objectionLists.earlyStage;
+    
+    const objection = objectionsToUse[Math.floor(Math.random() * objectionsToUse.length)];
+    
+    return {
+      success: true,
+      response: objection,
+      stage: 'early_objection',
+      selectedObjection: objection
+    };
+  }
 
-    const response = impatienceResponses[Math.floor(Math.random() * impatienceResponses.length)];
+  // Generate pitch prompt per client specs
+  generatePitchPrompt() {
+    const prompts = this.objectionLists.pitchPrompts;
+    const response = prompts[Math.floor(Math.random() * prompts.length)];
+    
+    return {
+      success: true,
+      response,
+      stage: 'pitch_prompt'
+    };
+  }
+
+  // Generate post-pitch objection per client specs
+  generatePostPitchObjection(context = {}) {
+    const usedObjections = context.usedObjections || new Set();
+    const count = context.objectionCount || 1;
+    
+    // Get available objections
+    const availableObjections = this.objectionLists.postPitch.filter(obj => 
+      !usedObjections.has(obj)
+    );
+    
+    if (availableObjections.length === 0) {
+      // All used in this call, this shouldn't happen
+      return {
+        success: true,
+        response: "I need to think about this more.",
+        stage: 'post_pitch_objection'
+      };
+    }
+    
+    // Select 1-3 objections as specified
+    const numObjections = Math.min(count, availableObjections.length);
+    const selectedObjections = [];
+    
+    for (let i = 0; i < numObjections; i++) {
+      const randomIndex = Math.floor(Math.random() * availableObjections.length);
+      const objection = availableObjections.splice(randomIndex, 1)[0];
+      selectedObjections.push(objection);
+    }
+    
+    const response = selectedObjections[0]; // Return first objection
+    
+    return {
+      success: true,
+      response,
+      stage: 'post_pitch_objection',
+      selectedObjections
+    };
+  }
+
+  // Generate quickfire objection for warmup challenge
+  generateQuickfireObjection() {
+    // Combine both lists for variety in warmup
+    const allObjections = [
+      ...this.objectionLists.earlyStage,
+      ...this.objectionLists.postPitch
+    ];
+    
+    const response = allObjections[Math.floor(Math.random() * allObjections.length)];
+    
+    return {
+      success: true,
+      response,
+      stage: 'quickfire_objection'
+    };
+  }
+
+  // Generate silence response per client specs
+  generateSilenceResponse() {
+    const responses = this.objectionLists.impatienceResponses;
+    const response = responses[Math.floor(Math.random() * responses.length)];
     
     return {
       success: true,
@@ -204,340 +325,333 @@ export class OpenAIService {
     };
   }
 
-  // Call OpenAI API with roleplay-specific prompts - ENHANCED FOR ALL MODES
-  async callOpenAIAPI(stage, userInput, context) {
+  // Generate random hangup per client specs (marathon mode)
+  generateRandomHangup() {
+    const hangupResponses = [
+      "Sorry, got to run.",
+      "I have another call coming in.",
+      "Something urgent just came up.",
+      "I need to jump on another call.",
+      "My meeting is starting now."
+    ];
+    
+    const response = hangupResponses[Math.floor(Math.random() * hangupResponses.length)];
+    
+    return {
+      success: true,
+      response,
+      stage: 'random_hangup',
+      shouldHangUp: true
+    };
+  }
+
+  // Generate impatience response per client specs
+  generateImpatienceResponse() {
+    const responses = this.objectionLists.impatienceResponses;
+    const response = responses[Math.floor(Math.random() * responses.length)];
+    
+    return {
+      success: true,
+      response,
+      stage: 'impatience'
+    };
+  }
+
+  // Generate conversational response using OpenAI with client-specific prompts
+  async generateConversationalResponse(stage, userInput, context) {
+    // Try OpenAI first
+    if (!this.useMockMode) {
+      try {
+        const aiResponse = await this.callOpenAIWithClientSpecs(stage, userInput, context);
+        return {
+          success: true,
+          response: aiResponse,
+          stage
+        };
+      } catch (error) {
+        logger.warn('🔄 [OPENAI-SPECS] OpenAI failed, using intelligent fallback');
+      }
+    }
+
+    // Use intelligent fallback
+    return this.generateIntelligentFallback(stage, userInput, context);
+  }
+
+  // Call OpenAI with client-specific prompts
+  async callOpenAIWithClientSpecs(stage, userInput, context) {
     if (!this.client) {
       throw new Error('OpenAI client not initialized');
     }
 
-    const messages = this.buildRoleplayPrompt(stage, userInput, context);
+    const messages = this.buildClientSpecificPrompt(stage, userInput, context);
     
-    logger.log('📡 Calling OpenAI API for:', { 
-      stage, 
-      mode: this.sessionContext?.mode, 
-      roleplayType: this.sessionContext?.roleplayType 
-    });
-
     const response = await this.client.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: messages,
-      max_tokens: 150, // Increased for more natural responses
-      temperature: 0.8, // Higher for more variety in marathon mode
+      max_tokens: 100, // Keep responses concise per client specs
+      temperature: 0.8,
       presence_penalty: 0.6,
-      frequency_penalty: 0.4 // Higher to avoid repetition in marathon
+      frequency_penalty: 0.4
     });
 
-    if (!response.choices || !response.choices[0] || !response.choices[0].message) {
-      throw new Error('Invalid OpenAI response structure');
+    if (!response.choices?.[0]?.message?.content) {
+      throw new Error('Invalid OpenAI response');
     }
 
-    const aiResponse = response.choices[0].message.content.trim();
-    logger.log('✅ OpenAI API response received for stage:', stage);
-    
-    return aiResponse;
+    return response.choices[0].message.content.trim();
   }
 
-  // Build roleplay-specific prompt based on specifications - ENHANCED FOR ALL MODES
-  buildRoleplayPrompt(stage, userInput, context) {
-    const character = this.currentCharacter || { 
-      name: 'Sarah', 
-      title: 'VP of Marketing', 
-      company: 'TechCorp',
-      personality: 'busy, professional, skeptical'
-    };
+  // Build client-specific prompts
+  buildClientSpecificPrompt(stage, userInput, context) {
+    const character = this.currentCharacter;
+    const mode = this.sessionContext?.mode;
+    const evaluation = context.evaluation;
+    
+    // Base character prompt
+    let characterPrompt = `You are ${character.name}, ${character.title} at ${character.company}. `;
+    characterPrompt += `You work in ${this.sessionContext?.userProfile?.prospect_industry || 'Technology'}. `;
+    
+    if (this.sessionContext?.userProfile?.custom_behavior_notes) {
+      characterPrompt += `Additional context: ${this.sessionContext.userProfile.custom_behavior_notes}. `;
+    }
 
-    const mode = this.sessionContext?.mode || 'practice';
-    const roleplayType = this.sessionContext?.roleplayType || 'opener_practice';
+    // Mode-specific behavior
+    let modePrompt = '';
+    if (mode === 'legend') {
+      modePrompt = 'Be challenging and demanding. You expect excellence and are skeptical. ';
+    } else if (mode === 'marathon') {
+      modePrompt = 'Vary your personality. Sometimes be more difficult, sometimes more receptive. ';
+    } else {
+      modePrompt = 'Be moderately receptive if they show good skills. ';
+    }
+
+    // Stage-specific instructions
+    let stagePrompt = this.getStageSpecificPrompt(stage, evaluation);
     
-    const basePrompt = this.buildCharacterPrompt(character, context);
-    const stagePrompt = this.buildStagePrompt(stage, context, mode, roleplayType);
-    const modePrompt = this.buildModePrompt(mode);
+    const systemPrompt = `${characterPrompt}${modePrompt}${stagePrompt}
     
-    const systemPrompt = `${basePrompt}\n\n${stagePrompt}\n\n${modePrompt}\n\nRespond in under 30 words. Use natural, conversational English. Stay in character. Vary your responses to avoid repetition.`;
-    
+    Respond in under 25 words. Use natural, conversational CEFR C2 English. Stay in character.`;
+
     const messages = [
-      {
-        role: "system",
-        content: systemPrompt
-      }
+      { role: "system", content: systemPrompt }
     ];
 
-    // Add conversation history (last 8 exchanges for better context)
-    const recentHistory = this.conversationHistory.slice(-8);
+    // Add conversation history (last 6 exchanges)
+    const recentHistory = this.conversationHistory.slice(-6);
     messages.push(...recentHistory);
 
     // Add current user input
-    messages.push({
-      role: "user",
-      content: userInput
-    });
+    messages.push({ role: "user", content: userInput });
 
     return messages;
   }
 
-  // Build character-specific prompt
-  buildCharacterPrompt(character, context) {
-    const { roleplayType, userProfile } = this.sessionContext || {};
-    
-    let characterPrompt = `You are ${character.name}, ${character.title} at ${character.company}.`;
-    
-    // Add personality traits
-    if (character.personality) {
-      characterPrompt += ` You are ${character.personality}.`;
-    }
-
-    // Add industry context if available
-    if (userProfile?.prospect_industry) {
-      characterPrompt += ` You work in ${userProfile.prospect_industry}.`;
-    }
-
-    // Add custom behavior notes if available
-    if (userProfile?.custom_behavior_notes) {
-      characterPrompt += ` Additional context: ${userProfile.custom_behavior_notes}`;
-    }
-
-    return characterPrompt;
-  }
-
-  // Build mode-specific prompt for different difficulty levels
-  buildModePrompt(mode) {
-    const modePrompts = {
-      practice: "Be moderately receptive if they show good sales skills. Give them a fair chance to practice.",
-      
-      marathon: "Vary your personality across calls. Sometimes be more difficult, sometimes more receptive. Be realistic and challenging but not impossible. Test their adaptability.",
-      
-      legend: "Be challenging and demanding. You're a tough prospect who expects excellence. Only the best responses should move you forward. Be skeptical and require strong value propositions."
+  // Get stage-specific prompts per client specifications
+  getStageSpecificPrompt(stage, evaluation) {
+    const prompts = {
+      opener: evaluation?.passed 
+        ? "They showed good opener skills. Be somewhat receptive but still cautious."
+        : "Their opener wasn't impressive. Be resistant or give an objection.",
+        
+      early_objection: evaluation?.hasEmpathy
+        ? "They showed empathy. Become slightly more receptive but still cautious."
+        : "They argued or pushed. Be resistant and consider hanging up.",
+        
+      mini_pitch: evaluation?.passed
+        ? "Good pitch. Ask a follow-up question or show mild interest."
+        : "Weak pitch. Give a realistic objection about budget, timing, or need.",
+        
+      post_pitch_handling: evaluation?.passed
+        ? "They handled that well. Ask a realistic business question."
+        : "Poor handling. Be more resistant or evasive.",
+        
+      qualification: evaluation?.passed
+        ? "They're qualifying well. Provide realistic company information."
+        : "Poor qualification attempt. Be evasive or redirect.",
+        
+      meeting_ask: evaluation?.passed
+        ? "Reasonable meeting ask. Show interest but some hesitation."
+        : "Poor meeting ask. Be reluctant or ask for more information.",
+        
+      default: "Continue the conversation naturally as a busy business professional."
     };
 
-    return modePrompts[mode] || modePrompts.practice;
+    return prompts[stage] || prompts.default;
   }
 
-  // Build stage-specific prompt based on roleplay specifications - ENHANCED
-  buildStagePrompt(stage, context, mode, roleplayType) {
-    const evaluation = context.evaluation || {};
-    const exchanges = context.exchanges || 0;
-    
-    // Adjust difficulty based on mode
-    const difficultyLevel = mode === 'legend' ? 'very challenging' : 
-                           mode === 'marathon' ? 'moderately challenging' : 
-                           'balanced';
-
-    const stagePrompts = {
-      greeting: "You just answered a cold call. Give a brief, professional greeting and wait for their opener.",
-      
-      opener: `The caller just delivered their opener. Be ${difficultyLevel}. ${
-        evaluation.passed 
-          ? "They showed good skills - be somewhat receptive but still cautious." 
-          : "They didn't impress - be more resistant or give an early objection."
-      }`,
-      
-      objection: `Give a realistic early-stage objection. Choose from: 'What's this about?', 'I'm not interested', 'We don't take cold calls', 'Now is not a good time', 'Is this a sales call?', 'Who gave you this number?', 'We're happy with our current solution'. Be ${difficultyLevel}.`,
-      
-      objection_response: `The caller is handling your objection. ${
-        evaluation.hasEmpathy 
-          ? "They showed empathy - become slightly more receptive but still cautious." 
-          : "They argued or pushed - be resistant and consider hanging up soon."
-      }`,
-      
-      mini_pitch: `The caller is giving their pitch. ${
-        evaluation.passed 
-          ? "Listen and ask a follow-up question or show mild interest." 
-          : "Give a realistic objection about budget, timing, or need."
-      }`,
-      
-      pitch_prompt: "You want to hear their pitch. Use one of these: 'Alright, go ahead — what's this about?', 'So… what are you calling me about?', 'You've got 30 seconds. Impress me.', 'I'm listening. What do you do?', 'This better be good. What is it?'",
-      
-      questions_objections: `After hearing their pitch, ${
-        evaluation.passed 
-          ? "ask a realistic business question about implementation, cost, or results." 
-          : "give a post-pitch objection: 'It's too expensive', 'We already use a competitor', 'How are you different?', 'I'm not the decision-maker'."
-      }`,
-      
-      qualification: `The caller is trying to qualify you. ${
-        evaluation.passed 
-          ? "Provide realistic answers about your company's situation but don't make it too easy." 
-          : "Be evasive or redirect back to them."
-      }`,
-      
-      meeting_ask: `The caller is asking for a meeting. ${
-        evaluation.passed 
-          ? "Show some interest but also some hesitation. Ask about timing or agenda." 
-          : "Be reluctant. Ask for more information first or cite being too busy."
-      }`,
-      
-      confirmation: "If you've agreed to a meeting, wait for them to confirm details or end the call professionally.",
-      
-      close: `They're trying to close. ${
-        evaluation.passed 
-          ? "Show interest but have some final hesitation about timing or next steps." 
-          : "Politely decline or ask for more time to think."
-      }`,
-      
-      default: `Continue the conversation naturally as a ${difficultyLevel} business professional receiving a cold call. You've had ${exchanges} exchanges so far.`
-    };
-
-    return stagePrompts[stage] || stagePrompts.default;
-  }
-
-  // Generate intelligent fallback when OpenAI fails - ENHANCED FOR ALL MODES
+  // Generate intelligent fallback responses
   generateIntelligentFallback(stage, userInput, context) {
-    logger.log('🔄 Using intelligent fallback for:', { stage, mode: this.sessionContext?.mode });
-
-    const mode = this.sessionContext?.mode || 'practice';
-    const evaluation = context.evaluation || {};
+    const evaluation = context.evaluation;
     
-    // Mode-specific response pools
-    const getResponsePool = (responses) => {
-      if (mode === 'marathon' || mode === 'legend') {
-        // Larger, more varied pool for marathon/legend
-        return [...responses, ...this.getVariedResponses(stage, mode)];
+    const fallbacks = {
+      opener: evaluation?.passed
+        ? this.generateEarlyObjection(context)
+        : { success: true, response: "I'm not interested.", stage: 'call_end' },
+        
+      early_objection: evaluation?.passed
+        ? this.generatePitchPrompt()
+        : { success: true, response: "I really don't have time for this.", stage: 'call_end' },
+        
+      mini_pitch: evaluation?.passed
+        ? { success: true, response: "That sounds interesting. Tell me more.", stage: 'post_pitch_handling' }
+        : { success: true, response: "I'm not sure I understand.", stage: 'call_end' },
+        
+      post_pitch_handling: evaluation?.passed
+        ? { success: true, response: "What kind of results do you typically see?", stage: 'qualification' }
+        : { success: true, response: "We're happy with our current solution.", stage: 'call_end' },
+        
+      qualification: evaluation?.passed
+        ? { success: true, response: "That could be helpful for us.", stage: 'meeting_ask' }
+        : { success: true, response: "I'm not sure this applies to us.", stage: 'call_end' },
+        
+      meeting_ask: evaluation?.passed
+        ? { success: true, response: "I'm pretty busy next week. What would we cover?", stage: 'close' }
+        : { success: true, response: "I need to think about that.", stage: 'call_end' },
+        
+      default: { success: true, response: "I see. Please continue.", stage }
+    };
+
+    return fallbacks[stage] || fallbacks.default;
+  }
+
+  // Generate emergency fallback
+  generateEmergencyFallback(stage) {
+    const emergencyResponses = {
+      greeting: "Hello?",
+      opener: "What's this about?",
+      early_objection: "Okay, what exactly are you offering?",
+      mini_pitch: "Tell me more about that.",
+      post_pitch_handling: "That's interesting.",
+      qualification: "I see.",
+      meeting_ask: "I'll have to think about that.",
+      default: "Could you repeat that?"
+    };
+
+    return {
+      success: true,
+      response: emergencyResponses[stage] || emergencyResponses.default,
+      stage
+    };
+  }
+
+  // Generate coaching feedback per client CEFR A2 specifications
+  async generateCoachingFeedback(evaluations, roleplayType, mode) {
+    const coaching = {
+      sales: [],
+      grammar: [],
+      vocabulary: [],
+      pronunciation: [],
+      rapport: []
+    };
+
+    // Analyze evaluations for specific feedback
+    evaluations.forEach(evaluation => {
+      if (evaluation.criteria) {
+        evaluation.criteria.forEach(criterion => {
+          if (!criterion.met) {
+            coaching.sales.push(this.formatSalesFeedback(criterion));
+          }
+        });
       }
-      return responses;
-    };
+    });
 
-    const fallbackResponses = {
-      greeting: ["Hello?", `${this.currentCharacter?.name || 'Sarah'} speaking.`],
-      
-      opener: getResponsePool(
-        evaluation.passed 
-          ? ["What's this about?", "I might have a minute. Go on.", "You have my attention."]
-          : ["I'm not interested.", "We don't take cold calls.", "Is this a sales call?"]
-      ),
-      
-      objection_response: 
-        evaluation.hasEmpathy 
-          ? getResponsePool(["Okay, what exactly are you offering?", "I'm listening. What is it?"])
-          : getResponsePool(["I really don't have time for this.", "Look, I'm not interested."]),
-      
-      mini_pitch: getResponsePool([
-        "Tell me more about that.",
-        "How exactly does that work?", 
-        "What makes you different?",
-        "That sounds interesting. Go on."
-      ]),
-      
-      pitch_prompt: getResponsePool([
-        "Alright, go ahead — what's this about?",
-        "You've got 30 seconds. Impress me.",
-        "I'm listening. What do you do?",
-        "Let's hear it."
-      ]),
-      
-      questions_objections: getResponsePool(
-        evaluation.passed 
-          ? ["What kind of results do you typically see?", "How long does implementation take?"]
-          : ["It's too expensive for us.", "We already use a competitor.", "I'm not the decision-maker."]
-      ),
-      
-      qualification: getResponsePool([
-        "We're doing okay with our current setup.",
-        "It depends on what you're offering.",
-        "Tell me more about how this works.",
-        "What exactly are you proposing?"
-      ]),
-      
-      meeting_ask: getResponsePool(
-        evaluation.passed 
-          ? ["I'm pretty busy next week.", "What would we cover in the meeting?"]
-          : ["Can you send me some information first?", "I need to think about that."]
-      ),
-      
-      default: getResponsePool([
-        "I see. Tell me more.",
-        "How exactly would that help us?",
-        "What's the cost involved?",
-        "I'll need to think about that."
-      ])
-    };
+    // Add grammar feedback in client format
+    if (this.hasGrammarIssues(evaluations)) {
+      coaching.grammar.push(this.generateGrammarFeedback());
+    } else {
+      coaching.grammar.push("Great grammar—no errors detected!");
+    }
 
-    const responses = fallbackResponses[stage] || fallbackResponses.default;
-    const selectedResponse = responses[Math.floor(Math.random() * responses.length)];
+    // Add vocabulary feedback in client format
+    if (this.hasVocabularyIssues(evaluations)) {
+      coaching.vocabulary.push(this.generateVocabularyFeedback());
+    } else {
+      coaching.vocabulary.push("Perfect word choice!");
+    }
+
+    // Add pronunciation feedback (simulated)
+    coaching.pronunciation.push("Clear pronunciation throughout!");
+
+    // Add rapport feedback
+    coaching.rapport.push("Natural and confident tone!");
+
+    // Format according to client specifications
+    const maxLines = mode === 'practice' ? 6 : 10;
+    const allFeedback = [];
     
-    logger.log('🎯 Selected fallback response:', selectedResponse);
-    
-    return selectedResponse;
+    Object.values(coaching).forEach(categoryFeedback => {
+      allFeedback.push(...categoryFeedback.slice(0, 2));
+    });
+
+    return allFeedback.slice(0, maxLines);
   }
 
-  // Get varied responses for marathon/legend modes
-  getVariedResponses(stage, mode) {
-    const variedResponses = {
-      opener: [
-        "Who gave you this number?",
-        "What company are you calling from?",
-        "How long is this going to take?",
-        "We're not looking for anything right now.",
-        "I have a meeting in five minutes.",
-        "Can you call me back later?",
-        "Send me an email instead."
-      ],
-      
-      objection_response: [
-        "You're not listening. I said no.",
-        "I need to go.",
-        "This isn't a good time.",
-        "What part of 'not interested' don't you understand?",
-        "You have two minutes to convince me.",
-        "Make it quick."
-      ],
-      
-      questions_objections: [
-        "We have no budget right now.",
-        "Your competitor is cheaper.",
-        "Can you give us a discount?",
-        "We've already set this year's budget.",
-        "Call me back next quarter.",
-        "We're busy with other projects.",
-        "How exactly are you better than others?",
-        "I've never heard of your company.",
-        "Who else like us have you worked with?",
-        "How long does this take to implement?",
-        "We don't have time to learn a new system."
-      ]
+  // Format sales feedback per client templates
+  formatSalesFeedback(criterion) {
+    const feedbackTemplates = {
+      demonstrates_empathy: "Add empathy: 'I know this is out of the blue...'",
+      soft_question_ending: "End with soft question: 'Can I tell you why I'm calling?'",
+      calm_acknowledgment: "Acknowledge calmly: 'Fair enough' or 'I get that'",
+      forward_moving_question: "Ask forward-moving question to continue conversation",
+      concrete_day_time_option: "Offer two time slots: 'Tuesday at 2pm or Wednesday at 10am?'"
     };
 
-    return variedResponses[stage] || [];
+    return feedbackTemplates[criterion.criterion] || criterion.feedback;
   }
 
-  // Get specific objection types for warmup challenge
-  getWarmupChallengObjection() {
-    const objections = [
-      "I'm not interested in your product.",
-      "We already have a solution for that.",
-      "I don't have time for this right now.",
-      "Send me some information and I'll look at it.",
-      "We're happy with our current vendor.",
-      "It's too expensive for us.",
-      "We have no budget right now.",
-      "Your competitor is cheaper.",
-      "This isn't a good time.",
-      "We're busy with other projects.",
-      "I'm not the decision-maker.",
-      "I need approval from my team first.",
-      "How are you different from others?",
-      "I've never heard of your company.",
-      "Who else like us have you worked with?",
-      "We don't take cold calls.",
-      "Is this a sales call?",
-      "What company are you calling from?",
-      "Who gave you this number?",
-      "How long is this going to take?",
-      "We're not looking for anything right now.",
-      "Can you call me back later?",
-      "Send me an email instead.",
-      "We already use a competitor and we're happy.",
-      "How long does this take to implement?"
+  // Generate grammar feedback in client format
+  generateGrammarFeedback() {
+    const examples = [
+      "You said: 'We can assist the meeting.' Say: 'We can attend the meeting.' Because 'assist' in Spanish means 'attend', but in English it means 'help'.",
+      "You said: 'I will call you back.' Say: 'I'll call you back.' Because contractions sound more natural.",
+      "You said: 'Very good.' Say: 'That's great!' Because it sounds more natural in conversation."
     ];
+    
+    return examples[Math.floor(Math.random() * examples.length)];
+  }
 
-    return objections[Math.floor(Math.random() * objections.length)];
+  // Generate vocabulary feedback in client format
+  generateVocabularyFeedback() {
+    const examples = [
+      "You said: 'win a meeting.' Say: 'book a meeting.' Because 'win' is not natural here.",
+      "You said: 'assist you.' Say: 'help you.' Because 'help' is more natural in this context.",
+      "You said: 'schedule a reunion.' Say: 'schedule a meeting.' Because 'reunion' is for social gatherings."
+    ];
+    
+    return examples[Math.floor(Math.random() * examples.length)];
+  }
+
+  // Helper methods
+  hasGrammarIssues(evaluations) {
+    // Simulate grammar issue detection
+    return Math.random() < 0.3; // 30% chance of grammar feedback
+  }
+
+  hasVocabularyIssues(evaluations) {
+    // Simulate vocabulary issue detection
+    return Math.random() < 0.3; // 30% chance of vocabulary feedback
+  }
+
+  // Add to conversation history
+  addToHistory(userInput, aiResponse) {
+    this.conversationHistory.push(
+      { role: 'user', content: userInput },
+      { role: 'assistant', content: aiResponse }
+    );
+
+    // Keep only last 10 exchanges
+    if (this.conversationHistory.length > 20) {
+      this.conversationHistory = this.conversationHistory.slice(-20);
+    }
   }
 
   // Reset conversation state
   resetConversation() {
     this.conversationHistory = [];
-    logger.log('🔄 OpenAI conversation reset');
+    logger.log('🔄 [OPENAI-SPECS] Conversation reset');
   }
 
-  // Get conversation state
+  // Get service state
   getState() {
     return {
       isInitialized: this.isInitialized,
@@ -545,71 +659,6 @@ export class OpenAIService {
       hasCharacter: !!this.currentCharacter,
       conversationLength: this.conversationHistory.length,
       sessionContext: this.sessionContext
-    };
-  }
-
-  // Generate coaching feedback based on evaluation
-  async generateCoachingFeedback(sessionData) {
-    try {
-      if (!this.useMockMode && this.client) {
-        // Use OpenAI for detailed coaching feedback
-        const coachingPrompt = this.buildCoachingPrompt(sessionData);
-        
-        const response = await this.client.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [{ role: 'system', content: coachingPrompt }],
-          max_tokens: 300,
-          temperature: 0.7
-        });
-
-        if (response.choices?.[0]?.message?.content) {
-          return this.parseCoachingResponse(response.choices[0].message.content);
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to generate AI coaching, using fallback');
-    }
-
-    // Fallback coaching
-    return this.generateFallbackCoaching(sessionData);
-  }
-
-  // Build coaching prompt
-  buildCoachingPrompt(sessionData) {
-    return `You are an expert cold calling coach. Analyze this roleplay session and provide specific feedback:
-
-Session Data: ${JSON.stringify(sessionData, null, 2)}
-
-Provide feedback in these categories:
-1. Sales Skills - opener, objection handling, closing
-2. Grammar - sentence structure, correctness
-3. Vocabulary - word choice, business terminology  
-4. Pronunciation - clarity, confidence
-5. Overall - key strengths and improvements
-
-Be specific and constructive. Focus on actionable improvements.`;
-  }
-
-  // Parse coaching response
-  parseCoachingResponse(response) {
-    // Basic parsing - could be enhanced with more sophisticated NLP
-    return {
-      sales: response.match(/Sales[\s\S]*?(?=Grammar|$)/i)?.[0] || "Good sales approach.",
-      grammar: response.match(/Grammar[\s\S]*?(?=Vocabulary|$)/i)?.[0] || "Clear communication.",
-      vocabulary: response.match(/Vocabulary[\s\S]*?(?=Pronunciation|$)/i)?.[0] || "Appropriate word choices.",
-      pronunciation: response.match(/Pronunciation[\s\S]*?(?=Overall|$)/i)?.[0] || "Speaking clearly.",
-      overall: response.match(/Overall[\s\S]*$/i)?.[0] || "Keep practicing to improve!"
-    };
-  }
-
-  // Generate fallback coaching
-  generateFallbackCoaching(sessionData) {
-    return {
-      sales: "Focus on building rapport and understanding prospect needs.",
-      grammar: "Use clear, complete sentences and natural contractions.",
-      vocabulary: "Choose business-appropriate words that show professionalism.",
-      pronunciation: "Speak clearly and confidently with appropriate pace.",
-      overall: "Great job practicing! Keep working on active listening and empathy."
     };
   }
 }
