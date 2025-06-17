@@ -1,4 +1,4 @@
-// src/contexts/RoleplayContext.jsx - UPDATED WITH SCORE RECORDING AND UNLOCK INTEGRATION
+// src/contexts/RoleplayContext.jsx - FIXED SESSION STARTUP FLOW
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { useProgress } from './ProgressContext';
@@ -52,15 +52,24 @@ export const RoleplayProvider = ({ children }) => {
     setIsProcessing(newValue);
   }, []);
 
-  // Start roleplay session with proper access checking and integration
+  // Start roleplay session - FIXED FLOW
   const startRoleplaySession = useCallback(async (roleplayType, mode, metadata = {}) => {
     try {
       logger.log('🎬 [ROLEPLAY] Starting session:', { roleplayType, mode });
       
-      // Reset flags
+      // Reset flags and state
       isEndingSessionRef.current = false;
       updateCallState('idle');
       updateIsProcessing(false);
+      
+      // Clear previous state
+      setConversationHistory([]);
+      setSessionResults(null);
+      setCurrentStage('greeting');
+      setCallCount(0);
+      setPassCount(0);
+      setEvaluations([]);
+      setCurrentMessage('');
       
       // Check access through progressTracker
       const accessCheck = await progressTracker.checkModuleAccess(userProfile?.id, roleplayType, mode);
@@ -68,11 +77,11 @@ export const RoleplayProvider = ({ children }) => {
         throw new Error(accessCheck.reason);
       }
 
-      // Initialize services
-      logger.log('🔄 [ROLEPLAY] Initializing services...');
+      // Initialize voice service first
+      logger.log('🔄 [ROLEPLAY] Initializing voice service...');
       await voiceService.initialize();
       
-      // Initialize roleplay engine with client specifications
+      // Initialize roleplay engine
       const engineResult = await roleplayEngine.initializeSession(
         userProfile?.id,
         roleplayType,
@@ -89,76 +98,75 @@ export const RoleplayProvider = ({ children }) => {
       // Set session state
       sessionRef.current = session;
       setCurrentSession(session);
-      setConversationHistory([]);
-      setSessionResults(null);
-      setCurrentStage('greeting');
-      setCallCount(0);
-      setPassCount(0);
-      setEvaluations([]);
       updateCallState('dialing');
       
-      logger.log('✅ [ROLEPLAY] Session initialized successfully');
+      logger.log('✅ [ROLEPLAY] Session initialized, starting greeting flow');
       
-      // Start the conversation flow after delay
+      // Start the greeting flow with proper delay
       setTimeout(async () => {
         if (isEndingSessionRef.current) {
           logger.log('⚠️ [ROLEPLAY] Session ended during startup');
           return;
         }
         
-        logger.log('🔄 [ROLEPLAY] Setting call state to connected');
-        updateCallState('connected');
-        
-        // Handle greeting stage
-        const greetingResponse = await roleplayEngine.processUserInput('', {
-          stage: 'greeting',
-          isGreeting: true
-        });
+        try {
+          updateCallState('connected');
+          
+          // Handle greeting stage - FIXED TO GET AI RESPONSE
+          logger.log('🔄 [ROLEPLAY] Processing greeting...');
+          const greetingResponse = await roleplayEngine.processUserInput('', {
+            stage: 'greeting',
+            isGreeting: true
+          });
 
-        if (greetingResponse.success && greetingResponse.response) {
-          setCurrentMessage(greetingResponse.response);
-          setCurrentStage(greetingResponse.stage || 'opener');
-          
-          // Add to conversation history
-          const greetingEntry = {
-            speaker: 'ai',
-            message: greetingResponse.response,
-            timestamp: Date.now()
-          };
-          
-          setConversationHistory([greetingEntry]);
-          
-          // Start voice conversation
-          setTimeout(() => {
-            logger.log('🎤 [ROLEPLAY] Starting voice conversation');
-            const success = voiceService.startConversation(
-              handleUserSpeech,
-              handleVoiceError
-            );
-            logger.log('🎤 [ROLEPLAY] Voice conversation started:', success);
-          }, 100);
-          
-          // Speak the greeting
-          try {
-            logger.log('🗣️ [ROLEPLAY] Speaking greeting:', greetingResponse.response);
-            await voiceService.speakText(greetingResponse.response);
-            logger.log('✅ [ROLEPLAY] Greeting spoken successfully');
-          } catch (speakError) {
-            logger.error('❌ [ROLEPLAY] Failed to speak greeting:', speakError);
+          if (greetingResponse.success && greetingResponse.response) {
+            logger.log('✅ [ROLEPLAY] Greeting received:', greetingResponse.response);
+            
+            setCurrentMessage(greetingResponse.response);
+            setCurrentStage(greetingResponse.stage || 'opener');
+            
+            // Add to conversation history
+            const greetingEntry = {
+              speaker: 'ai',
+              message: greetingResponse.response,
+              timestamp: Date.now()
+            };
+            
+            setConversationHistory([greetingEntry]);
+            
+            // Speak the greeting
+            try {
+              logger.log('🗣️ [ROLEPLAY] Speaking greeting...');
+              await voiceService.speakText(greetingResponse.response);
+              logger.log('✅ [ROLEPLAY] Greeting spoken successfully');
+              
+              // FIXED: Voice conversation will be started by UnifiedPhoneInterface
+              // after it detects the AI has finished speaking
+              
+            } catch (speakError) {
+              logger.error('❌ [ROLEPLAY] Failed to speak greeting:', speakError);
+            }
+          } else {
+            logger.error('❌ [ROLEPLAY] Failed to get greeting response');
+            throw new Error('Failed to initialize conversation');
           }
+        } catch (error) {
+          logger.error('❌ [ROLEPLAY] Error in greeting flow:', error);
+          throw error;
         }
         
-      }, 2000);
+      }, 2000); // 2 second delay for dialing state
       
       return session;
       
     } catch (error) {
       logger.error('❌ [ROLEPLAY] Error starting session:', error);
+      updateCallState('idle');
       throw error;
     }
   }, [userProfile, updateCallState, updateIsProcessing]);
 
-  // Handle user speech with comprehensive evaluation tracking
+  // Handle user speech - SIMPLIFIED AND FIXED
   const handleUserSpeech = useCallback(async (transcript, confidence) => {
     logger.log('🗣️ [ROLEPLAY] ====== handleUserSpeech CALLED ======');
     logger.log('🗣️ [ROLEPLAY] Transcript:', transcript);
@@ -169,7 +177,7 @@ export const RoleplayProvider = ({ children }) => {
       isProcessing: isProcessingRef.current
     });
 
-    // Use refs for current state
+    // Check preconditions
     if (!sessionRef.current) {
       logger.log('⚠️ [ROLEPLAY] No session, ignoring speech');
       return;
@@ -201,15 +209,11 @@ export const RoleplayProvider = ({ children }) => {
         timestamp: Date.now()
       };
       
-      setConversationHistory(prev => {
-        const updated = [...prev, userEntry];
-        logger.log('📝 [ROLEPLAY] Updated conversation history. Length:', updated.length);
-        return updated;
-      });
+      setConversationHistory(prev => [...prev, userEntry]);
 
       logger.log('🤖 [ROLEPLAY] Processing user input with engine...');
       
-      // Process input through roleplay engine with client specifications
+      // Process input through roleplay engine
       const engineResult = await roleplayEngine.processUserInput(transcript, {
         roleplayType: sessionRef.current.roleplayType,
         mode: sessionRef.current.mode,
@@ -221,7 +225,6 @@ export const RoleplayProvider = ({ children }) => {
         success: engineResult.success,
         hasResponse: !!engineResult.response,
         shouldHangUp: engineResult.shouldHangUp,
-        callPassed: engineResult.evaluation?.passed,
         sessionComplete: engineResult.sessionComplete
       });
 
@@ -266,12 +269,7 @@ export const RoleplayProvider = ({ children }) => {
             timestamp: Date.now()
           };
           
-          setConversationHistory(prev => {
-            const updated = [...prev, aiEntry];
-            logger.log('📝 [ROLEPLAY] Added AI response to history. Total length:', updated.length);
-            return updated;
-          });
-
+          setConversationHistory(prev => [...prev, aiEntry]);
           setCurrentMessage(engineResult.response);
           
           // Update current stage
@@ -280,7 +278,7 @@ export const RoleplayProvider = ({ children }) => {
           }
         }
 
-        // Speak AI response
+        // Speak AI response if provided and not hanging up
         if (engineResult.response && !engineResult.shouldHangUp) {
           try {
             logger.log('🗣️ [ROLEPLAY] Speaking AI response...');
@@ -572,11 +570,6 @@ export const RoleplayProvider = ({ children }) => {
       return null;
     }
   }, [endSessionWithResults]);
-
-  // Handle voice errors
-  const handleVoiceError = useCallback((error) => {
-    logger.error('🎤 [ROLEPLAY] Voice error:', error);
-  }, []);
 
   // Reset session
   const resetSession = useCallback(() => {

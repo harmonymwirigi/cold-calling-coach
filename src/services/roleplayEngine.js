@@ -440,18 +440,53 @@ class RoleplayEngine {
   // Handle greeting stage
   async handleGreeting() {
     try {
-      const greetingResult = await openAIService.getProspectResponse('greeting', '', {
-        roleplayType: this.currentSession.roleplayType,
-        mode: this.currentSession.mode,
-        character: this.currentSession.character
-      });
-
+      logger.log('👋 [ENGINE] Generating greeting response...');
+      
+      const character = this.currentSession?.character || {
+        name: 'Sarah',
+        title: 'VP of Marketing',
+        company: 'TechCorp'
+      };
+  
+      // Try to get AI greeting first
       let response = "Hello?";
-      if (greetingResult.success) {
-        response = greetingResult.response;
+      
+      try {
+        const greetingResult = await openAIService.getProspectResponse('greeting', '', {
+          roleplayType: this.currentSession.roleplayType,
+          mode: this.currentSession.mode,
+          character: this.currentSession.character
+        });
+  
+        if (greetingResult.success && greetingResult.response) {
+          response = greetingResult.response;
+          logger.log('✅ [ENGINE] AI greeting generated:', response);
+        } else {
+          logger.warn('⚠️ [ENGINE] AI greeting failed, using fallback');
+        }
+      } catch (aiError) {
+        logger.warn('⚠️ [ENGINE] AI service error, using fallback greeting:', aiError);
       }
-
+  
+      // Fallback greetings if AI fails
+      if (!response || response === "Hello?") {
+        const fallbackGreetings = [
+          "Hello?",
+          `${character.name} speaking.`,
+          `Hi, this is ${character.name}.`,
+          "Hello, who is this?",
+          `${character.name} here.`
+        ];
+        
+        response = fallbackGreetings[Math.floor(Math.random() * fallbackGreetings.length)];
+        logger.log('🔄 [ENGINE] Using fallback greeting:', response);
+      }
+  
+      // Update conversation state
       this.conversationState.stage = 'opener';
+      this.conversationState.exchanges = 1;
+      
+      logger.log('✅ [ENGINE] Greeting completed, next stage: opener');
       
       return {
         success: true,
@@ -459,8 +494,11 @@ class RoleplayEngine {
         stage: 'opener',
         shouldHangUp: false
       };
+      
     } catch (error) {
-      logger.error('❌ Error generating greeting:', error);
+      logger.error('❌ [ENGINE] Error generating greeting:', error);
+      
+      // Emergency fallback
       this.conversationState.stage = 'opener';
       
       return {
